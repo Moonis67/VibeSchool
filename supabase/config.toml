@@ -1,0 +1,7 @@
+project_id = "loexcrmuuwyhjxrrusjp"
+
+[functions.process-document]
+verify_jwt = false
+
+[functions.transform-vibe]
+verify_jwt = false
