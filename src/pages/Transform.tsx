@@ -506,8 +506,18 @@ const Transform = () => {
         body: { file_path: filePath, material_id: materialRow.id }
       });
 
-      if (procError) throw procError;
-      // Edge functions returning HTTP 500 put the error in the response body, not in procError
+      if (procError) {
+        let msg = procError.message;
+        try {
+          const body = await procError.context.json();
+          if (body?.error) msg = body.error;
+          else if (body?.message) msg = body.message;
+        } catch (_) {
+          // context was not json or empty
+        }
+        throw new Error(msg);
+      }
+
       if (procData?.error) throw new Error(procData.error);
 
       toast.success(`Document processed! ${procData?.chunks_stored || ''} chunks indexed for RAG.`);
@@ -554,7 +564,15 @@ const Transform = () => {
         headers: { Authorization: `Bearer ${session?.access_token}` }
       });
       
-      if (error) throw error;
+      if (error) {
+        let msg = error.message;
+        try {
+          const body = await error.context.json();
+          if (body?.error) msg = body.error;
+          else if (body?.message) msg = body.message;
+        } catch (_) {}
+        throw new Error(msg);
+      }
       let rawContent = data.content;
       
       const suggestionsMatch = rawContent.match(/### NEXT_STEPS: (.*)/);
