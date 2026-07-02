@@ -342,6 +342,74 @@ const RapidFireBlock = ({ rawData, onRetry }: { rawData: string, onRetry: () => 
     );
 };
 
+// Dynamic PDF.js loader to prevent bundling size and worker issues in Vite
+const loadPdfJS = async (): Promise<any> => {
+  if ((window as any).pdfjsLib) return (window as any).pdfjsLib;
+  
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      const pdfjsLib = (window as any).pdfjsLib;
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(pdfjsLib);
+    };
+    script.onerror = () => reject(new Error("Failed to load PDF parsing library from CDN."));
+    document.head.appendChild(script);
+  });
+};
+
+// Client-side text extraction from PDF file
+const extractTextFromPDF = async (file: File, onProgress: (msg: string) => void): Promise<string> => {
+  onProgress("Loading PDF reader engine...");
+  const pdfjsLib = await loadPdfJS();
+  const arrayBuffer = await file.arrayBuffer();
+  
+  onProgress("Parsing PDF pages...");
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let fullText = "";
+  
+  for (let i = 1; i <= pdf.numPages; i++) {
+    onProgress(`Extracting page ${i} of ${pdf.numPages}...`);
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items.map((item: any) => (item as any).str).join(" ");
+    fullText += pageText + "\n";
+  }
+  return fullText;
+};
+
+// Client-side overlapping text chunker
+function chunkTextWithOverlapClient(text: string, chunkSize = 600, overlap = 120): string[] {
+  const chunks: string[] = [];
+  if (!text) return chunks;
+  
+  let startIndex = 0;
+  while (startIndex < text.length) {
+    let endIndex = startIndex + chunkSize;
+    
+    if (endIndex < text.length) {
+      const lastSpace = text.lastIndexOf(' ', endIndex);
+      if (lastSpace > startIndex) {
+        endIndex = lastSpace;
+      }
+    }
+    
+    const chunk = text.substring(startIndex, endIndex).trim();
+    if (chunk.length > 0) {
+      chunks.push(chunk);
+    }
+    
+    const nextIndex = endIndex - overlap;
+    if (nextIndex <= startIndex) {
+      startIndex = endIndex;
+    } else {
+      startIndex = nextIndex;
+    }
+  }
+  return chunks;
+}
+
 const Transform = () => {
   const navigate = useNavigate(); 
   const [searchParams] = useSearchParams(); 
@@ -480,7 +548,26 @@ const Transform = () => {
     setIsUploading(true); setFile(selectedFile); setMaterialId(null);
     
     try {
-      toast.info("Uploading PDF to storage bucket...");
+      // 1. Extract text and chunk it client-side
+      let rawText = "";
+      try {
+        rawText = await extractTextFromPDF(selectedFile, (msg) => {
+          toast.info(msg, { id: "pdf-status" });
+        });
+      } catch (pdfErr: any) {
+        toast.dismiss("pdf-status");
+        throw new Error(`PDF read failure: ${pdfErr.message}`);
+      }
+      toast.dismiss("pdf-status");
+
+      if (rawText.trim().length < 15) {
+        throw new Error("This PDF has no extractable text. It might be scanned, image-only, or password protected.");
+      }
+
+      const chunks = chunkTextWithOverlapClient(rawText, 600, 120);
+      toast.info(`Extracted ${chunks.length} chunks. Uploading PDF and indexing...`);
+
+      // 2. Upload the file to storage bucket
       const fileExt = selectedFile.name.split('.').pop();
       const filePath = `${Date.now()}-${Math.random().toString(36).substring(2, 7)}.${fileExt}`;
 
@@ -490,7 +577,7 @@ const Transform = () => {
 
       if (uploadError) throw uploadError;
 
-      toast.info("Generating reference records...");
+      // 3. Create database reference record
       const { data: materialRow, error: dbError } = await supabase
         .from('materials')
         .insert({ name: selectedFile.name, file_path: filePath })
@@ -500,10 +587,14 @@ const Transform = () => {
       if (dbError) throw dbError;
 
       setMaterialId(materialRow.id);
-      toast.info("Analyzing content and generating context vectors...");
 
+      // 4. Send prepared chunks to Edge Function to run embeddings
       const { data: procData, error: procError } = await supabase.functions.invoke('process-document', {
-        body: { file_path: filePath, material_id: materialRow.id }
+        body: { 
+          file_path: filePath, 
+          material_id: materialRow.id,
+          chunks: chunks
+        }
       });
 
       if (procError) {
@@ -512,15 +603,13 @@ const Transform = () => {
           const body = await procError.context.json();
           if (body?.error) msg = body.error;
           else if (body?.message) msg = body.message;
-        } catch (_) {
-          // context was not json or empty
-        }
+        } catch (_) {}
         throw new Error(msg);
       }
 
       if (procData?.error) throw new Error(procData.error);
 
-      toast.success(`Document processed! ${procData?.chunks_stored || ''} chunks indexed for RAG.`);
+      toast.success(`Success! PDF text extracted, chunked, and ${procData?.chunks_stored || chunks.length} sections indexed for RAG search.`);
     } catch (error: any) { 
       toast.error("Ingestion Process Faulted: " + error.message); 
       setFile(null); 
