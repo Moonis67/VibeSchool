@@ -61,21 +61,48 @@ serve(async (req) => {
       // --- STANDARD RAG PROFESSOR PIPELINE (Transform Hub) ---
       const userQuery = topic || "Overview";
       let retrievedContext = "";
+      let ragStatus = "NO_DOCUMENT";
 
       if (material_id) {
-        // @ts-ignore
-        const aiSession = new Supabase.ai.Session('gte-small');
-        const queryEmbedding = await aiSession.run(userQuery, { mean_pool: true, normalize: true });
+        try {
+          // @ts-ignore
+          const aiSession = new Supabase.ai.Session('gte-small');
+          const queryEmbedding = await aiSession.run(userQuery, { mean_pool: true, normalize: true });
 
-        const { data: matchedChunks } = await supabase.rpc('match_document_sections', {
-          embedding: queryEmbedding,
-          match_threshold: 0.2,
-          match_count: 4,
-          filter_material_id: material_id
-        });
+          const { data: matchedChunks, error: rpcError } = await supabase.rpc('match_document_sections', {
+            embedding: queryEmbedding,
+            match_threshold: 0.15,
+            match_count: 6,
+            filter_material_id: material_id
+          });
 
-        if (matchedChunks) {
-          retrievedContext = matchedChunks.map((chunk: any) => chunk.content).join("\n\n");
+          if (rpcError) {
+            console.error("RPC match error:", rpcError.message);
+            ragStatus = "RPC_ERROR";
+          } else if (matchedChunks && matchedChunks.length > 0) {
+            retrievedContext = matchedChunks.map((chunk: any) => chunk.content).join("\n\n---\n\n");
+            ragStatus = "CONTEXT_FOUND";
+            console.log(`RAG: Found ${matchedChunks.length} relevant chunks for query: "${userQuery}"`);
+          } else {
+            ragStatus = "NO_MATCHES";
+            console.log(`RAG: No matching chunks found for query: "${userQuery}"`);
+            
+            // Fallback: if vector search returned nothing, grab raw chunks directly
+            const { data: fallbackChunks } = await supabase
+              .from('document_sections')
+              .select('content')
+              .eq('material_id', material_id)
+              .limit(6);
+            
+            if (fallbackChunks && fallbackChunks.length > 0) {
+              retrievedContext = fallbackChunks.map((c: any) => c.content).join("\n\n---\n\n");
+              ragStatus = "FALLBACK_USED";
+              console.log(`RAG FALLBACK: Retrieved ${fallbackChunks.length} chunks directly from document_sections`);
+            }
+          }
+        } catch (ragError: any) {
+          console.error("RAG Pipeline Exception:", ragError.message);
+          ragStatus = "EXCEPTION";
         }
       }
 
@@ -100,16 +127,43 @@ serve(async (req) => {
         `;
       }
 
+      // Build the context block for the system prompt
+      let contextBlock = "";
+      if (retrievedContext && retrievedContext.trim().length > 0) {
+        contextBlock = `
+        --- REFERENCE MATERIAL (USE THIS AS YOUR PRIMARY KNOWLEDGE SOURCE) ---
+        The following text excerpts are extracted from the student's uploaded study document.
+        You MUST base your response primarily on this material. Teach from it, quote it, and reference it directly.
+        DO NOT say you cannot access files — the text content is provided directly below.
+
+        ${retrievedContext}
+
+        --- END REFERENCE MATERIAL ---
+        `;
+      } else {
+        contextBlock = `
+        --- KNOWLEDGE SOURCE ---
+        No reference document was provided by the student for this query.
+        Use your own training knowledge to answer the topic thoroughly and helpfully.
+        DO NOT mention files, attachments, or document access limitations.
+        --- END KNOWLEDGE SOURCE ---
+        `;
+      }
+
       finalSystemPrompt = `
-        You are an Adaptive AI Professor. 
+        You are an Adaptive AI Professor who teaches students effectively.
         VIBE PROFILE: Mode: ${activeTab}, Learning Style: ${learningStyle}, Tone/Mood: ${mood}, Available Study Window: ${timeAvailable} minutes.
 
         --- PEDAGOGICAL GUARDRAILS ---
         ${adaptiveConstraints}
 
-        --- RAG SOURCE MATERIAL CONTEXT ---
-        ${retrievedContext ? retrievedContext : "No document attached. Rely safely on base training fields."}
-        --- END CONTEXT ---
+        ${contextBlock}
+
+        --- CRITICAL BEHAVIORAL RULES ---
+        - NEVER say "I don't have the capability to access files" or similar. You have ALL the context you need inline above.
+        - NEVER refuse to answer. Always provide a helpful, educational response.
+        - If reference material is provided above, teach EXCLUSIVELY from that material.
+        - If no reference material is provided, teach from your own knowledge confidently.
 
         --- OUTPUT FORMATTING STYLING LAWS ---
         1. INTENSE SELECTIVITY: Do not overformat. Write general explanations using standard, clear paragraph text.
@@ -131,14 +185,14 @@ serve(async (req) => {
         finalUserPrompt = `Create a 6-step study roadmap for ${userQuery}. Format precisely using: ### Step Title | Actionable Description | Time Allotment ###`;
       } else if (activeTab === "quiz") {
         finalUserPrompt = quizFormat === 'mcq' 
-          ? `Generate 5 multiple choice questions covering ${userQuery} based on the source text.`
-          : `Generate 5 rapid fire conceptual short-answer questions covering ${userQuery}.`;
+          ? `Generate 5 multiple choice questions covering ${userQuery} based on the reference material provided in the system context.`
+          : `Generate 5 rapid fire conceptual short-answer questions covering ${userQuery} based on the reference material provided in the system context.`;
       } else if (learnFormat === 'podcast') {
-        finalUserPrompt = `Write an ultra-engaging educational podcast dialogue script between Host A and Host B deep diving into ${userQuery}.`;
+        finalUserPrompt = `Write an ultra-engaging educational podcast dialogue script between Host A and Host B deep diving into ${userQuery}. Use the reference material as the primary source.`;
       } else if (learnFormat === 'flashcards') {
-        finalUserPrompt = `Generate 7 separate core flashcards about ${userQuery}. Split each individual card with "---".`;
+        finalUserPrompt = `Generate 7 separate core flashcards about ${userQuery}. Split each individual card with "---". Base the content on the reference material.`;
       } else {
-        finalUserPrompt = `Teach me about: ${userQuery}`;
+        finalUserPrompt = `Teach me about: ${userQuery}. Use the reference material provided in the system context as your primary source.`;
       }
     }
 

@@ -119,11 +119,11 @@ CREATE TABLE IF NOT EXISTS public.document_sections (
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 
--- Create an index for fast similarity search
+-- Create an HNSW index for fast similarity search (works with any dataset size)
 CREATE INDEX IF NOT EXISTS idx_document_sections_embedding
   ON public.document_sections
-  USING ivfflat (embedding vector_cosine_ops)
-  WITH (lists = 100);
+  USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
 
 ALTER TABLE public.document_sections ENABLE ROW LEVEL SECURITY;
 

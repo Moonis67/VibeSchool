@@ -502,13 +502,15 @@ const Transform = () => {
       setMaterialId(materialRow.id);
       toast.info("Analyzing content and generating context vectors...");
 
-      const { error: procError } = await supabase.functions.invoke('process-document', {
+      const { data: procData, error: procError } = await supabase.functions.invoke('process-document', {
         body: { file_path: filePath, material_id: materialRow.id }
       });
 
       if (procError) throw procError;
+      // Edge functions returning HTTP 500 put the error in the response body, not in procError
+      if (procData?.error) throw new Error(procData.error);
 
-      toast.success("Document optimized for adaptive RAG search!");
+      toast.success(`Document processed! ${procData?.chunks_stored || ''} chunks indexed for RAG.`);
     } catch (error: any) { 
       toast.error("Ingestion Process Faulted: " + error.message); 
       setFile(null); 
