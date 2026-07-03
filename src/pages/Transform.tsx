@@ -1,12 +1,20 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom"; 
 import { supabase } from "@/integrations/supabase/client";
+import { generateContent, generateFollowUp, SUGGESTED_TOPICS } from "@/lib/aiEngine";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
 import mermaid from "mermaid"; 
 import katex from "katex"; 
@@ -379,8 +387,8 @@ const extractTextFromPDF = async (file: File, onProgress: (msg: string) => void)
   return fullText;
 };
 
-// Client-side overlapping text chunker
-function chunkTextWithOverlapClient(text: string, chunkSize = 600, overlap = 120): string[] {
+// Client-side overlapping text chunker. Larger chunks reduce embedding work for long PDFs.
+function chunkTextWithOverlapClient(text: string, chunkSize = 1400, overlap = 180): string[] {
   const chunks: string[] = [];
   if (!text) return chunks;
   
@@ -415,6 +423,8 @@ const Transform = () => {
   const [searchParams] = useSearchParams(); 
   const hasAutoStarted = useRef(false); 
   const contentEndRef = useRef<HTMLDivElement>(null);
+  const [featureGuideOpen, setFeatureGuideOpen] = useState(false);
+  const [pendingAutoTopic, setPendingAutoTopic] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<"learn" | "quiz" | "visualize" | "plan">("learn");
   const [learnFormat, setLearnFormat] = useState("lecture"); 
@@ -456,6 +466,33 @@ const Transform = () => {
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const [fullAudioText, setFullAudioText] = useState("");
   const [charOffset, setCharOffset] = useState(0);
+
+  const featureGuide = {
+    learn: {
+      title: "AI Tutor",
+      description: "Ask for a lecture, flashcards, podcast, or a Socratic explanation. The tutor keeps your level, mood, and time window in mind.",
+      steps: ["Choose a learning format", "Type a topic or upload a PDF", "Ask follow-up questions under the answer"],
+      icon: BookOpen,
+    },
+    quiz: {
+      title: "Quiz Builder",
+      description: "Generate MCQs or rapid-fire questions from any topic, then check your answers instantly.",
+      steps: ["Pick MCQ or Rapid", "Enter the topic", "Use results to spot weak areas"],
+      icon: BrainCircuit,
+    },
+    visualize: {
+      title: "Visualizer",
+      description: "Turn ideas into flowcharts or digital-logic style diagrams so complex topics become easier to inspect.",
+      steps: ["Choose Flow or Circuit", "Enter a process or concept", "Copy the diagram code when needed"],
+      icon: Share2,
+    },
+    plan: {
+      title: "Pathfinder",
+      description: "Build a compact roadmap with ordered steps and time estimates for learning a topic.",
+      steps: ["Enter your target topic", "Generate a plan", "Work through each milestone"],
+      icon: Map,
+    },
+  } as const;
 
   useEffect(() => {
     const fetchSessionHistory = async () => {
@@ -530,17 +567,61 @@ const Transform = () => {
 
   useEffect(() => {
     const topic = searchParams.get("topic");
-    const mode = searchParams.get("mode") as any;
+    const mode = searchParams.get("mode");
+    const format = searchParams.get("format");
+    const quiz = searchParams.get("quiz");
+    const viz = searchParams.get("viz");
+    const style = searchParams.get("style");
+    const guide = searchParams.get("guide");
+
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    setFeatureGuideOpen(guide === "1");
+
+    if (mode === 'roadmap' || mode === 'plan') setActiveTab('plan');
+    else if (mode === 'diagram' || mode === 'visualize') setActiveTab('visualize');
+    else if (mode === 'quiz') setActiveTab('quiz');
+    else if (mode === 'learn' || mode === 'chat') setActiveTab('learn');
+
+    if (format === 'lecture' || format === 'flashcards' || format === 'podcast') {
+      setLearnFormat(format);
+    }
+    if (quiz === 'mcq' || quiz === 'rapid') {
+      setQuizFormat(quiz);
+    }
+    if (viz === 'flowchart' || viz === 'dld') {
+      setVizFormat(viz);
+    }
+    if (style === 'visual' || style === 'socratic' || style === 'analogical' || style === 'academic') {
+      setLearningStyle(style);
+    }
+
     if (topic && !hasAutoStarted.current) {
       hasAutoStarted.current = true;
       setUserTopic(topic);
       setIsEditingProfile(false);
-      if (mode === 'roadmap') setActiveTab('plan'); else if (mode === 'diagram') setActiveTab('visualize'); else if (mode === 'quiz') setActiveTab('quiz'); else setActiveTab('learn');
-      handleGenerate(topic);
+      setPendingAutoTopic(topic);
     }
   }, [searchParams]);
 
-  useEffect(() => { contentEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [contentStream, diagramCode, roadmapData, relatedSuggestions]);
+  useEffect(() => {
+    if (!pendingAutoTopic) return;
+
+    const topic = pendingAutoTopic;
+    setPendingAutoTopic(null);
+    handleGenerate(topic);
+  }, [pendingAutoTopic]);
+
+  useEffect(() => {
+    const hasOutput =
+      contentStream.length > 0 ||
+      Boolean(diagramCode) ||
+      roadmapData.length > 0 ||
+      relatedSuggestions.length > 0;
+
+    if (hasOutput) {
+      contentEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    }
+  }, [contentStream, diagramCode, roadmapData, relatedSuggestions]);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -564,7 +645,7 @@ const Transform = () => {
         throw new Error("This PDF has no extractable text. It might be scanned, image-only, or password protected.");
       }
 
-      const chunks = chunkTextWithOverlapClient(rawText, 600, 120);
+      const chunks = chunkTextWithOverlapClient(rawText);
       toast.info(`Extracted ${chunks.length} chunks. Uploading PDF and indexing...`);
 
       // 2. Upload the file to storage bucket
@@ -610,6 +691,9 @@ const Transform = () => {
       if (procData?.error) throw new Error(procData.error);
 
       toast.success(`Success! PDF text extracted, chunked, and ${procData?.chunks_stored || chunks.length} sections indexed for RAG search.`);
+      if (procData?.chunks_embedded < procData?.chunks_received) {
+        toast.info(`Indexed the first ${procData.chunks_embedded} of ${procData.chunks_received} sections to stay within compute limits.`);
+      }
     } catch (error: any) { 
       toast.error("Ingestion Process Faulted: " + error.message); 
       setFile(null); 
@@ -617,6 +701,43 @@ const Transform = () => {
     } finally { 
       setIsUploading(false); 
     }
+  };
+
+  // Shared helper to process raw AI content into the right state
+  const processRawContent = (rawContent: string, suggestions?: string[]) => {
+    if (suggestions && suggestions.length > 0) {
+      setRelatedSuggestions(suggestions);
+    }
+    // Strip inline suggestions if present
+    const suggestionsMatch = rawContent.match(/### NEXT_STEPS: (.*)/);
+    if (suggestionsMatch) {
+      if (!suggestions || suggestions.length === 0) {
+        setRelatedSuggestions(suggestionsMatch[1].split('|').map((s: string) => s.trim()));
+      }
+      rawContent = rawContent.replace(suggestionsMatch[0], '').trim();
+    }
+    if (activeTab === "visualize") {
+      setDiagramCode(rawContent.replace(/```mermaid/g, "").replace(/```/g, "").trim());
+    } else if (activeTab === "plan") {
+      const steps = rawContent.split("###").map((s:string) => {
+        const p = s.split("|");
+        return p.length >= 2 ? { title: p[0].trim(), desc: p[1].trim(), time: p[2]?.trim() } : null;
+      }).filter(Boolean);
+      setRoadmapData(steps);
+    } else if (activeTab === "quiz") {
+      if (quizFormat === 'mcq') setContentStream(prev => [...prev, { type: 'quiz-interactive', data: rawContent, role: 'ai' }]);
+      else setContentStream(prev => [...prev, { type: 'quiz-rapid', data: rawContent, role: 'ai' }]);
+    } else {
+      if (learnFormat === 'podcast') {
+        setContentStream(prev => [...prev, { type: 'podcast', data: rawContent, role: 'ai' }]);
+        setTimeout(() => handleSpeak(rawContent, 0), 500);
+      } else {
+        let type = learnFormat === 'flashcards' ? 'cards' : 'text';
+        let payload = learnFormat === 'flashcards' ? rawContent.split("---").filter((x:string)=>x.length>10) : rawContent;
+        setContentStream(prev => [...prev, { type, data: payload, role: 'ai' }]);
+      }
+    }
+    setIsEditingProfile(false);
   };
 
   const handleGenerate = async (topicOverride?: string) => {
@@ -631,7 +752,9 @@ const Transform = () => {
     let i = 0; setAgentStatus(actions[0]);
     const interval = setInterval(() => { i=(i+1)%actions.length; setAgentStatus(actions[i]); }, 1500);
     
+    let usedFallback = false;
     try {
+      // 1. Try Supabase Edge Function first
       const { data: { session } } = await supabase.auth.getSession();
       
       const { data, error } = await supabase.functions.invoke('transform-vibe', {
@@ -662,47 +785,43 @@ const Transform = () => {
         } catch (_) {}
         throw new Error(msg);
       }
-      let rawContent = data.content;
-      
-      const suggestionsMatch = rawContent.match(/### NEXT_STEPS: (.*)/);
-      if (suggestionsMatch) {
-          setRelatedSuggestions(suggestionsMatch[1].split('|').map((s: string) => s.trim()));
-          rawContent = rawContent.replace(suggestionsMatch[0], '').trim();
-      }
-      if (activeTab === "visualize") {
-          setDiagramCode(rawContent.replace(/```mermaid/g, "").replace(/```/g, "").trim());
-      } else if (activeTab === "plan") {
-          const steps = rawContent.split("###").map((s:string) => {
-              const p = s.split("|");
-              return p.length >= 2 ? { title: p[0].trim(), desc: p[1].trim(), time: p[2]?.trim() } : null;
-          }).filter(Boolean);
-          setRoadmapData(steps);
-      } else if (activeTab === "quiz") {
-           if(quizFormat === 'mcq') setContentStream(prev => [...prev, { type: 'quiz-interactive', data: rawContent, role: 'ai' }]);
-           else setContentStream(prev => [...prev, { type: 'quiz-rapid', data: rawContent, role: 'ai' }]);
-      } else {
-          if (learnFormat === 'podcast') {
-             setContentStream(prev => [...prev, { type: 'podcast', data: rawContent, role: 'ai' }]);
-             setTimeout(() => handleSpeak(rawContent, 0), 500);
-          } else {
-             let type = learnFormat === 'flashcards' ? 'cards' : 'text';
-             let payload = learnFormat === 'flashcards' ? rawContent.split("---").filter((x:string)=>x.length>10) : rawContent;
-             setContentStream(prev => [...prev, { type, data: payload, role: 'ai' }]);
-          }
-      }
-      setIsEditingProfile(false);
+      processRawContent(data.content);
 
-      // Log configuration data cleanly up to the user profile table sync definitions
+      // Log session history
       if (session?.user) {
          await supabase.from('user_session_history').insert({
             user_id: session.user.id,
             last_topic: topic,
             weak_areas: activeTab === 'quiz' ? ['Review Conceptual Edge Scenarios'] : ['General Recall Bounds'],
             suggestions: [`Re-run customized logic checks parameters inside ${topic}`]
-         });
+         }).catch(() => {});
       }
 
-    } catch (e: any) { toast.error(e.message); } 
+    } catch (e: any) {
+      // 2. Fallback to client-side AI engine
+      console.log('Supabase unavailable, using local AI engine:', e.message);
+      usedFallback = true;
+      try {
+        const result = generateContent({
+          topic,
+          activeTab,
+          learnFormat,
+          quizFormat,
+          vizFormat,
+          mood,
+          timeAvailable,
+          learningStyle,
+          eduLevel,
+          grade,
+          collegeYear,
+          major
+        });
+        processRawContent(result.content, result.suggestions);
+        toast.info('Generated locally — connect Supabase for AI-powered content.', { duration: 3000 });
+      } catch (fallbackError: any) {
+        toast.error('Content generation failed: ' + fallbackError.message);
+      }
+    } 
     finally { clearInterval(interval); setIsGenerating(false); }
   };
 
@@ -714,9 +833,34 @@ const Transform = () => {
      handleGenerate(target);
   };
 
+  const getRecentLessonContext = () => {
+    const recentBlock = [...contentStream]
+      .reverse()
+      .find((block) => block.role === "ai" && ["text", "podcast", "cards"].includes(block.type));
+
+    if (!recentBlock) return "";
+
+    const rawText = Array.isArray(recentBlock.data)
+      ? recentBlock.data.join("\n")
+      : String(recentBlock.data || "");
+
+    return rawText.replace(/\s+/g, " ").slice(0, 1200);
+  };
+
+  const isVagueFollowUp = (value: string) => {
+    return /^(tell me more|explain more|more|go deeper|continue|expand|elaborate|detail it|make it clearer|simplify|again|why|how so)\b/i.test(value.trim());
+  };
+
   const handleExplainMore = async (query?: string) => {
       const q = query || explainInput;
       if (!q.trim()) return;
+      const baseTopic = userTopic.trim() || historicalData?.last_topic || "the current lesson";
+      const recentContext = getRecentLessonContext();
+      const vagueFollowUp = isVagueFollowUp(q);
+      const contextualQuestion = vagueFollowUp
+        ? `Expand the current topic "${baseTopic}" based on the previous answer. Student wording: "${q}"`
+        : q;
+
       setExplainInput(""); setRelatedSuggestions([]); 
       setContentStream(prev => [...prev, { type: 'question', data: q, role: 'user' }]);
       setIsGenerating(true);
@@ -724,30 +868,80 @@ const Transform = () => {
         const { data: { session } } = await supabase.auth.getSession();
         const { data, error } = await supabase.functions.invoke('transform-vibe', {
             body: { 
-              topic: q, 
-              eduLevel, 
-              grade, 
-              collegeYear, 
-              major, 
-              activeTab, 
-              material_id: materialId, 
-              mood, 
-              learningStyle, 
-              timeAvailable,
-              quizFormat,
-              learnFormat,
-              vizFormat
+              content: [
+                `Current lesson topic: ${baseTopic}`,
+                `Student follow-up: ${q}`,
+                `Recent answer context: ${recentContext || "No prior answer text captured. Use the current lesson topic."}`,
+                "Task: Answer the student's follow-up in context. If the follow-up is vague, expand the current topic rather than the literal words of the follow-up. Keep it concise, practical, and useful."
+              ].join("\n\n"),
+              systemPrompt: [
+                "You are a contextual AI tutor handling follow-up questions.",
+                "Use the current lesson topic and recent answer context as the source of truth.",
+                "Do not treat vague phrases like 'tell me more' as the subject.",
+                "Answer in 2-4 short sections maximum, using fewer tokens than a full lesson."
+              ].join(" ")
             },
             headers: { Authorization: `Bearer ${session?.access_token}` }
         });
         if(error) throw error;
         setContentStream(prev => [...prev, { type: 'text', data: data.content, role: 'ai' }]);
-      } catch (e: any) { toast.error(e.message); } 
+      } catch (e: any) {
+        // Fallback to local AI engine for follow-up
+        console.log('Supabase unavailable for follow-up, using local engine:', e.message);
+        try {
+          const followUpContent = generateFollowUp(contextualQuestion, baseTopic);
+          setContentStream(prev => [...prev, { type: 'text', data: followUpContent, role: 'ai' }]);
+        } catch (fallbackError: any) {
+          toast.error('Follow-up generation failed: ' + fallbackError.message);
+        }
+      }
       finally { setIsGenerating(false); }
   };
 
+  const currentFeatureGuide = featureGuide[activeTab];
+  const FeatureGuideIcon = currentFeatureGuide.icon;
+
   return (
     <div className="min-h-screen bg-background relative overflow-hidden font-sans pb-20 w-full">
+      <Dialog open={featureGuideOpen} onOpenChange={setFeatureGuideOpen}>
+        <DialogContent className="max-w-2xl rounded-2xl border-2">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-3 text-2xl">
+              <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                <FeatureGuideIcon className="h-5 w-5" />
+              </div>
+              {currentFeatureGuide.title}
+            </DialogTitle>
+            <DialogDescription>{currentFeatureGuide.description}</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            {currentFeatureGuide.steps.map((step, index) => (
+              <div key={step} className="rounded-xl border-2 bg-muted/30 p-4">
+                <div className="mb-3 flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
+                  {index + 1}
+                </div>
+                <p className="text-sm font-semibold leading-snug">{step}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+            <Button variant="outline" onClick={() => setFeatureGuideOpen(false)}>
+              Start from here
+            </Button>
+            <Button
+              onClick={() => {
+                setFeatureGuideOpen(false);
+                document.getElementById("topic-source")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              Go to topic box
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-primary/5 rounded-full blur-[100px] pointer-events-none" />
       
       <div className="w-full px-6 lg:px-10 py-24 relative z-10 flex flex-col gap-8">
@@ -852,7 +1046,7 @@ const Transform = () => {
             </Card>
         </div>
 
-        <Card className="border-2 p-0 flex flex-col w-full mb-12 overflow-hidden shadow-sm">
+        <Card id="topic-source" className="border-2 p-0 flex flex-col w-full mb-12 overflow-hidden shadow-sm scroll-mt-24">
             <div className="p-4 bg-muted/30 border-b flex items-center gap-2">
                 <FileText className="w-4 h-4 text-primary" />
                 <span className="font-bold text-xs uppercase">Topic Source</span>
@@ -869,10 +1063,27 @@ const Transform = () => {
                     </div>}
                 </div>
                 
+                {/* Quick Topic Chips */}
+                <div className="flex flex-wrap gap-2">
+                    {SUGGESTED_TOPICS.map((st) => (
+                        <button
+                            key={st.topic}
+                            onClick={() => { setUserTopic(st.topic); }}
+                            className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all hover:scale-105 hover:shadow-sm ${
+                                userTopic.toLowerCase() === st.topic.toLowerCase()
+                                    ? 'bg-primary/10 border-primary/40 text-primary'
+                                    : 'bg-muted/50 border-border text-muted-foreground hover:bg-muted hover:text-foreground'
+                            }`}
+                        >
+                            {st.emoji} {st.label}
+                        </button>
+                    ))}
+                </div>
+
                 <Textarea 
                     value={userTopic} 
                     onChange={e => setUserTopic(e.target.value)} 
-                    placeholder="Or type topic here..." 
+                    placeholder="Type a topic (e.g. Binary Search, Photosynthesis, Newton's Laws)..." 
                     className="resize-none min-h-[140px] text-lg bg-slate-50/30" 
                 />
             </div>
@@ -946,10 +1157,22 @@ const Transform = () => {
                            )}
                         </div>
                      ) : (
-                        <>
-                           <BrainCircuit className="w-32 h-32 stroke-1 text-slate-400 mb-6" />
-                           <p className="text-2xl font-medium text-slate-600">Neural Gateway Ready</p>
-                        </>
+                        <div className="flex flex-col items-center gap-6 max-w-lg">
+                           <BrainCircuit className="w-24 h-24 stroke-1 text-slate-300 mb-2" />
+                           <p className="text-2xl font-bold text-slate-600">Ready to Generate</p>
+                           <p className="text-sm text-muted-foreground max-w-md">Choose a mode, pick your settings, then enter a topic above or click one of these to get started:</p>
+                           <div className="flex flex-wrap justify-center gap-2">
+                              {SUGGESTED_TOPICS.map((st) => (
+                                  <button
+                                      key={st.topic}
+                                      onClick={() => { setUserTopic(st.topic); handleGenerate(st.topic); }}
+                                      className="px-4 py-2 rounded-full text-sm font-semibold bg-primary/5 border border-primary/20 text-primary hover:bg-primary/10 hover:scale-105 transition-all cursor-pointer"
+                                  >
+                                      {st.emoji} {st.label}
+                                  </button>
+                              ))}
+                           </div>
+                        </div>
                      )}
                   </div>
                )}
@@ -1012,6 +1235,23 @@ const Transform = () => {
                      )}
                   </div>
                ))}
+               {/* Related Suggestions */}
+               {relatedSuggestions.length > 0 && !isGenerating && (
+                  <div className="mt-8 pt-6 border-t border-dashed border-primary/20 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                     <p className="text-xs font-bold uppercase text-muted-foreground mb-3 tracking-wider">🔗 Explore Related Topics</p>
+                     <div className="flex flex-wrap gap-2">
+                        {relatedSuggestions.map((suggestion, idx) => (
+                           <button
+                              key={idx}
+                              onClick={() => { setUserTopic(suggestion); handleGenerate(suggestion); }}
+                              className="px-4 py-2 rounded-full text-sm font-semibold bg-primary/5 border border-primary/20 text-primary hover:bg-primary/10 hover:scale-105 transition-all cursor-pointer"
+                           >
+                              {suggestion}
+                           </button>
+                        ))}
+                     </div>
+                  </div>
+               )}
                <div ref={contentEndRef} />
             </div>
         </Card>

@@ -8,14 +8,14 @@ import { SUBJECTS_LIST, SUBJECT_CONTENT } from "@/data/subjectContent";
 import ReactPlayer from 'react-player'; 
 import { 
   FileText, HelpCircle, Wand2, ArrowLeft, 
-  Play, ListVideo, BrainCircuit, ChevronDown, ChevronUp, BookOpen
+  Play, ListVideo, BrainCircuit, ChevronDown, ChevronUp, BookOpen, Sparkles, ArrowRight
 } from "lucide-react";
 
 const Subject = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   
-  const subjectData = SUBJECT_CONTENT[id as string] || SUBJECT_CONTENT["math"];
+  const subjectData = id ? SUBJECT_CONTENT[id as string] : null;
   const subjectName = SUBJECTS_LIST.find(s => s.id === id)?.name || "Subject";
 
   const [activeVideo, setActiveVideo] = useState(subjectData?.videos?.[0] || null);
@@ -32,6 +32,52 @@ const Subject = () => {
     const solutionPrompt = `Explain the solution and the concept behind this question: "${questionText}"`;
     navigate(`/transform?mode=learn&topic=${encodeURIComponent(solutionPrompt)}`);
   };
+
+  if (!id) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col font-sans w-full overflow-x-hidden">
+        <main className="flex-1 w-full px-6 py-10 lg:py-14 max-w-6xl mx-auto">
+          <Button variant="ghost" className="mb-8 gap-2" onClick={() => navigate('/dashboard')}>
+            <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+          </Button>
+
+          <div className="mb-10">
+            <p className="text-primary font-bold uppercase tracking-widest text-xs mb-2">Subject Library</p>
+            <h1 className="text-4xl font-extrabold tracking-tight">Choose a subject to explore</h1>
+            <p className="text-muted-foreground mt-3 text-lg max-w-2xl">
+              Open videos, core concepts, practice questions, and AI help for the subject you want to study.
+            </p>
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {SUBJECTS_LIST.map((sub) => {
+              const data = SUBJECT_CONTENT[sub.id];
+              return (
+                <button
+                  key={sub.id}
+                  type="button"
+                  onClick={() => navigate(`/subject/${sub.id}`)}
+                  className="p-6 rounded-xl border-2 bg-card text-left hover:border-primary/40 hover:shadow-xl transition-all group focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="h-12 w-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center group-hover:scale-105 transition-transform">
+                      <sub.icon className="w-6 h-6" />
+                    </div>
+                    <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+                  </div>
+                  <h2 className="font-bold text-xl mt-5">{sub.name}</h2>
+                  <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{data?.description}</p>
+                  <div className="flex items-center gap-2 text-xs font-bold text-primary mt-5">
+                    <Sparkles className="w-3.5 h-3.5" /> Open learning hub
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   if (!subjectData) return <div className="p-10 text-center">Subject not found.</div>;
 

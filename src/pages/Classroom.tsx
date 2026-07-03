@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { answerQuestion, generateNotesFromTranscript } from "@/lib/classroomEngine";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
@@ -153,9 +154,21 @@ const Classroom = () => {
                  ...prev 
              ]);
              toast.success("Answer Found!");
-          } catch (e) { 
-              console.error(e); 
-          } finally { 
+           } catch (e) { 
+               // Fallback: answer locally when Supabase is unavailable
+               console.log('Supabase unavailable for Q&A, using local engine:', e);
+               try {
+                   const localResult = answerQuestion(text);
+                   const newId = Date.now().toString();
+                   setQaHistory(prev => [
+                       { id: newId, query: text, answer: localResult.answer, explanation: localResult.explanation, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }, 
+                       ...prev 
+                   ]);
+                   toast.success("Answer Found!");
+               } catch (_) {
+                   console.error('Local engine also failed:', _);
+               }
+           } finally { 
               setIsThinking(false); 
           }
       }
@@ -203,7 +216,17 @@ const Classroom = () => {
           if (error) throw error;
           setGeneratedNotes(data.content);
           toast.success("Notes Ready!");
-      } catch (e: any) { toast.error(e.message); } finally { setIsGeneratingNotes(false); }
+       } catch (e: any) { 
+           // Fallback: generate notes locally
+           console.log('Supabase unavailable for notes, using local engine:', e.message);
+           try {
+               const localNotes = generateNotesFromTranscript(transcript);
+               setGeneratedNotes(localNotes);
+               toast.success("Notes generated locally!");
+           } catch (fallbackErr: any) {
+               toast.error("Note generation failed: " + fallbackErr.message);
+           }
+       } finally { setIsGeneratingNotes(false); }
   };
 
   const copyNotes = () => {

@@ -75,7 +75,11 @@ export const Sidebar = ({ isOpen, toggle }: SidebarProps) => {
         </ScrollArea>
 
         <div className="p-3 border-t bg-muted/20 shrink-0">
-            <Button variant="ghost" className="justify-start gap-4 h-12 w-full text-muted-foreground">
+            <Button
+              variant={location.pathname === "/profile" ? "secondary" : "ghost"}
+              className={`justify-start gap-4 h-12 w-full ${location.pathname === "/profile" ? 'bg-primary/10 text-primary font-bold' : 'text-muted-foreground'}`}
+              onClick={() => handleNavigation("/profile")}
+            >
                 <Settings className="w-5 h-5 shrink-0" />
                 <span className="lg:opacity-0 lg:group-hover:opacity-100 transition-opacity whitespace-nowrap">Settings</span>
             </Button>

@@ -363,7 +363,7 @@ const Index = () => {
             >
               <Button
                 size="lg"
-                onClick={() => navigate("/transform")}
+                onClick={() => navigate("/dashboard")}
                 className="h-14 px-8 text-lg rounded-full bg-white text-slate-950 shadow-2xl shadow-black/30 hover:bg-white/95 hover:shadow-black/50 hover:scale-105 transition-all duration-300 shimmer font-semibold group"
               >
                 Start Transforming
@@ -514,7 +514,7 @@ const Index = () => {
                 </p>
                 <Button
                   size="lg"
-                  onClick={() => navigate("/transform")}
+                  onClick={() => navigate("/dashboard")}
                   className="h-13 px-7 rounded-full bg-gradient-to-r from-primary to-purple-600 text-white hover:opacity-90 hover:scale-105 transition-all duration-300 shadow-xl shadow-primary/25 shimmer group"
                 >
                   Try It Yourself
@@ -598,7 +598,7 @@ const Index = () => {
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button
                 size="lg"
-                onClick={() => navigate("/transform")}
+                onClick={() => navigate("/dashboard")}
                 className="h-14 px-10 text-lg rounded-full bg-gradient-to-r from-primary to-purple-600 text-white shadow-2xl shadow-primary/30 hover:shadow-primary/50 hover:scale-105 transition-all duration-300 shimmer font-semibold group"
               >
                 Get Started — It's Free
@@ -761,7 +761,7 @@ const PricingCard = ({
 
     <Button
       onClick={() => {
-        if (name === "Free") navigate("/transform");
+        if (name === "Free") navigate("/dashboard");
         else if (name === "Pro") navigate("/pricing/pro");
         else navigate("/pricing/enterprise");
       }}

@@ -4,6 +4,9 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import { resolvePDFJS } from "https://esm.sh/pdfjs-serverless@0.4.2"
 
+const MAX_EMBEDDED_CHUNKS = 60;
+const MAX_STORED_CHUNKS = 90;
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -41,6 +44,16 @@ function chunkTextWithOverlap(text: string, chunkSize = 600, overlap = 120): str
   return chunks;
 }
 
+function cleanIncomingChunks(chunks: unknown): string[] {
+  if (!Array.isArray(chunks)) return [];
+
+  return chunks
+    .filter((chunk): chunk is string => typeof chunk === "string")
+    .map((chunk) => chunk.replace(/\s+/g, " ").trim())
+    .filter((chunk) => chunk.length >= 20)
+    .slice(0, MAX_STORED_CHUNKS);
+}
+
 serve(async (req) => {
   // 1. Instantly resolve the CORS preflight handshake with an unblocked 200 OK
   if (req.method === 'OPTIONS') {
@@ -48,7 +61,7 @@ serve(async (req) => {
   }
 
   try {
-    const { file_path, material_id } = await req.json()
+    const { file_path, material_id, chunks } = await req.json()
     console.log(`[process-document] Starting: file_path=${file_path}, material_id=${material_id}`);
 
     if (!file_path || !material_id) {
@@ -60,41 +73,50 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // 2. Download the file from the storage bucket
-    console.log("[process-document] Downloading file from storage...");
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from('educational-materials')
-      .download(file_path)
+    let safeChunks = cleanIncomingChunks(chunks);
+    let totalTextChars = safeChunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    let pages: number | null = null;
 
-    if (downloadError) throw new Error(`Download failed: ${downloadError.message}`)
+    if (safeChunks.length > 0) {
+      console.log(`[process-document] Using ${safeChunks.length} client-provided chunks`);
+    } else {
+      // Fallback for older clients: extract text server-side only when chunks were not provided.
+      console.log("[process-document] No client chunks provided. Downloading file from storage...");
+      const { data: fileData, error: downloadError } = await supabase.storage
+        .from('educational-materials')
+        .download(file_path)
 
-    const arrayBuffer = await fileData.arrayBuffer()
-    const data = new Uint8Array(arrayBuffer)
-    console.log(`[process-document] File downloaded: ${data.length} bytes`);
-    
-    // 3. Extract text using an environment-agnostic serverless safe PDF engine
-    console.log("[process-document] Extracting text from PDF...");
-    const { getDocument } = await resolvePDFJS();
-    const doc = await getDocument({ data, useSystemFonts: true }).promise;
-    let fullText = "";
-    
-    for (let i = 1; i <= doc.numPages; i++) {
-      const page = await doc.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(" ");
-      fullText += pageText + "\n";
+      if (downloadError) throw new Error(`Download failed: ${downloadError.message}`)
+
+      const arrayBuffer = await fileData.arrayBuffer()
+      const data = new Uint8Array(arrayBuffer)
+      console.log(`[process-document] File downloaded: ${data.length} bytes`);
+
+      console.log("[process-document] Extracting text from PDF...");
+      const { getDocument } = await resolvePDFJS();
+      const doc = await getDocument({ data, useSystemFonts: true }).promise;
+      let fullText = "";
+
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((item: any) => item.str).join(" ");
+        fullText += pageText + "\n";
+      }
+
+      pages = doc.numPages;
+      totalTextChars = fullText.length;
+      console.log(`[process-document] Extracted ${fullText.length} chars from ${doc.numPages} pages`);
+
+      if (fullText.trim().length < 10) {
+        throw new Error(`PDF text extraction yielded insufficient content (${fullText.length} chars). The PDF may be image-based or empty.`);
+      }
+
+      safeChunks = chunkTextWithOverlap(fullText, 1400, 180).slice(0, MAX_STORED_CHUNKS);
     }
 
-    console.log(`[process-document] Extracted ${fullText.length} chars from ${doc.numPages} pages`);
-
-    if (fullText.trim().length < 10) {
-      throw new Error(`PDF text extraction yielded insufficient content (${fullText.length} chars). The PDF may be image-based or empty.`);
-    }
-
-    // 4. Chunk text cleanly
-    const allChunks = chunkTextWithOverlap(fullText, 600, 120);
-    const safeChunks = allChunks.slice(0, 25); 
-    console.log(`[process-document] Created ${safeChunks.length} chunks (from ${allChunks.length} total)`);
+    const chunksForEmbedding = safeChunks.slice(0, MAX_EMBEDDED_CHUNKS);
+    console.log(`[process-document] Storing ${safeChunks.length} chunks; embedding ${chunksForEmbedding.length}`);
 
     // 5. Initialize Supabase Local Embedding Session
     console.log("[process-document] Generating embeddings with gte-small...");
@@ -102,8 +124,8 @@ serve(async (req) => {
     const session = new Supabase.ai.Session('gte-small')
     const insertPayload = [];
 
-    for (let i = 0; i < safeChunks.length; i++) {
-      const chunk = safeChunks[i];
+    for (let i = 0; i < chunksForEmbedding.length; i++) {
+      const chunk = chunksForEmbedding[i];
       try {
         const embedding = await session.run(chunk, { mean_pool: true, normalize: true })
         
@@ -122,6 +144,16 @@ serve(async (req) => {
       } catch (embError: any) {
         console.error(`[process-document] Embedding error on chunk ${i}: ${embError.message}`);
         // Still insert the chunk without embedding so the fallback retrieval works
+        insertPayload.push({
+          material_id: material_id,
+          content: chunk,
+          embedding: null
+        });
+      }
+    }
+
+    if (safeChunks.length > chunksForEmbedding.length) {
+      for (const chunk of safeChunks.slice(chunksForEmbedding.length)) {
         insertPayload.push({
           material_id: material_id,
           content: chunk,
@@ -151,8 +183,10 @@ serve(async (req) => {
         success: true, 
         message: `Processed ${safeChunks.length} chunks successfully`,
         chunks_stored: insertPayload.length,
-        total_text_chars: fullText.length,
-        pages: doc.numPages
+        chunks_received: safeChunks.length,
+        chunks_embedded: chunksForEmbedding.length,
+        total_text_chars: totalTextChars,
+        pages
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
