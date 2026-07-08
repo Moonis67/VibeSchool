@@ -52,8 +52,6 @@ serve(async (req) => {
       .from("documents")
       .update({
         processing_status: "queued",
-        uploaded_at: new Date().toISOString(),
-        processing_error: null,
       })
       .eq("document_id", documentId)
       .eq("user_id", userData.user.id);

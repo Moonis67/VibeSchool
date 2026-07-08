@@ -372,7 +372,7 @@ serve(async (req) => {
         success: true,
         document_id: documentId,
         material_id: documentId,
-        chunks_embedded: chunksUpserted,
+        chunk_count: chunksUpserted,
         pages: pages.length,
       },
       200,
