@@ -71,7 +71,7 @@ const Classroom = () => {
 
     // CRITICAL FIX: Track and handle silent native errors
     recognition.onerror = (event) => {
-      console.error("Speech Recognition Engine Exception:", event.error);
+      console.warn("Speech recognition stopped unexpectedly.");
       
       if (event.error === 'no-speech') {
         // 'no-speech' is triggered when the room goes quiet for a while. We can safely ignore it.
@@ -133,13 +133,17 @@ const Classroom = () => {
           setIsThinking(true); 
 
           try {
+             const { data: { session } } = await supabase.auth.getSession();
+             if (!session?.access_token) throw new Error("AUTH_REQUIRED");
+
              const { data, error } = await supabase.functions.invoke('transform-vibe', {
                 body: { 
                     content: `Classroom Query: "${text}". 
                     Output strictly: SHORT_ANSWER ||| EXPLANATION.`, 
                     systemPrompt: "You are a smart classroom assistant. Be concise.",
                     vibe: { mood: 'neutral' }
-                }
+                },
+                headers: { Authorization: `Bearer ${session.access_token}` }
              });
              
              if (error) throw error;
@@ -156,7 +160,6 @@ const Classroom = () => {
              toast.success("Answer Found!");
            } catch (e) { 
                // Fallback: answer locally when Supabase is unavailable
-               console.log('Supabase unavailable for Q&A, using local engine:', e);
                try {
                    const localResult = answerQuestion(text);
                    const newId = Date.now().toString();
@@ -166,7 +169,7 @@ const Classroom = () => {
                    ]);
                    toast.success("Answer Found!");
                } catch (_) {
-                   console.error('Local engine also failed:', _);
+                   toast.error("Could not generate an answer.");
                }
            } finally { 
               setIsThinking(false); 
@@ -188,7 +191,6 @@ const Classroom = () => {
         setIsListening(true); 
         toast.success("Listening..."); 
       } catch (e) { 
-        console.error("Collision error when calling start():", e);
         // If it crashes because it's already running, let's align our UI states safely
         setIsListening(true);
         isListeningRef.current = true;
@@ -206,25 +208,28 @@ const Classroom = () => {
       setIsGeneratingNotes(true);
 
       try {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (!session?.access_token) throw new Error("AUTH_REQUIRED");
+
           const { data, error } = await supabase.functions.invoke('transform-vibe', {
             body: { 
                 content: `TRANSCRIPT:\n${transcript}`, 
                 systemPrompt: `Expert Note Taker. Convert transcript to structured Markdown notes with headers, bullet points, and key terms. Format cleanly.`,
                 vibe: { mood: 'enthusiastic' }
-            }
+            },
+            headers: { Authorization: `Bearer ${session.access_token}` }
           });
           if (error) throw error;
           setGeneratedNotes(data.content);
           toast.success("Notes Ready!");
        } catch (e: any) { 
            // Fallback: generate notes locally
-           console.log('Supabase unavailable for notes, using local engine:', e.message);
            try {
                const localNotes = generateNotesFromTranscript(transcript);
                setGeneratedNotes(localNotes);
                toast.success("Notes generated locally!");
            } catch (fallbackErr: any) {
-               toast.error("Note generation failed: " + fallbackErr.message);
+               toast.error("Note generation failed.");
            }
        } finally { setIsGeneratingNotes(false); }
   };

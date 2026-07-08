@@ -628,11 +628,58 @@ function adjustForEduLevel(text: string, eduLevel: string, grade?: string): stri
   return text;
 }
 
+function applyAdaptiveTone(text: string, mood: string): string {
+  switch (mood) {
+    case "funny":
+      return text + "\n\n## Quick Reality Check\n\nIf this topic feels like a locked door, the key is usually one boring-looking definition. Find that definition, and suddenly the door stops acting so dramatic.";
+    case "strict":
+      return text.replace(/!/g, ".") + "\n\n## Must Know\n\nNo shortcuts: define the core terms, explain one example, then test yourself without notes.";
+    case "enthusiastic":
+      return text + "\n\n## Momentum Move\n\nSay the main idea out loud in one sentence, then immediately solve or explain one small example.";
+    case "encouraging":
+      return text + "\n\n## Gentle Checkpoint\n\nIf any term feels fuzzy, pause there. Confusion is usually a signpost, not a failure.";
+    case "professional":
+      return text + "\n\n## Professional Summary\n\nReview the key definitions, map them to a practical scenario, and apply them in a short exercise.";
+    case "socratic":
+      return text + "\n\n## Socratic Check\n\nWhat problem does this idea solve? What would break if it did not exist? Can you explain it with one example?";
+    default:
+      return text;
+  }
+}
+
+function applyProfileFrame(text: string, goal = "concept", experience = "beginner", context = "general learning", style = "academic"): string {
+  const experienceLine = experience === "advanced"
+    ? "I will include nuance, edge cases, and precision."
+    : experience === "rusty"
+      ? "I will refresh missing links before moving forward."
+      : experience === "intermediate"
+        ? "I will move quickly but still verify the foundations."
+        : "I will assume no prior confidence and define terms clearly.";
+
+  const goalLine = goal === "exam"
+    ? "Focus: exam traps, recall cues, and likely MCQ phrasing."
+    : goal === "interview"
+      ? "Focus: short verbal explanations and compare/contrast answers."
+      : goal === "project"
+        ? "Focus: practical usage, implementation choices, and tradeoffs."
+        : "Focus: deep understanding before memorization.";
+
+  const styleLine = style === "visual"
+    ? "Style: visual frameworks, mental maps, and labeled steps."
+    : style === "analogical"
+      ? "Style: analogies first, then formal definitions."
+      : style === "socratic"
+        ? "Style: guided questions followed by clear answers."
+        : "Style: structured definitions, examples, and self-checks.";
+
+  return `${text}\n\n## Personalized Focus\n\n* ${experienceLine}\n* ${goalLine}\n* ${styleLine}\n* Context: ${context}`;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    GENERIC CONTENT GENERATORS (for topics not in knowledge base)
    ═══════════════════════════════════════════════════════════════════ */
 
-function generateGenericLecture(topic: string, style: string, mood: string, time: string, eduLevel: string): string {
+function generateGenericLecture(topic: string, style: string, mood: string, time: string, eduLevel: string, goal = "concept", experience = "beginner", profileContext = "general learning"): string {
   const length = getContentLength(time);
   const intro = `## Introduction to ${topic}\n\n${topic} is a fascinating area of study that connects to many real-world applications. Let's explore its core concepts, key principles, and practical implications.\n\n`;
   
@@ -653,7 +700,8 @@ function generateGenericLecture(topic: string, style: string, mood: string, time
 
   let result = intro + coreContent + deepDive + practice + styleWrapper;
   result = adjustForEduLevel(result, eduLevel);
-  result = applyMood(result, mood);
+  result = applyProfileFrame(result, goal, experience, profileContext, style);
+  result = applyAdaptiveTone(result, mood);
   return result;
 }
 
@@ -669,13 +717,23 @@ function generateGenericFlashcards(topic: string): string {
   ].join("\n\n---\n\n");
 }
 
-function generateGenericMCQ(topic: string): string {
+function generateGenericMCQ(topic: string, difficulty = "basic"): string {
+  const advanced = difficulty === "advanced";
   return [
-    `### Q: What is the primary focus of ${topic}? | A) Surface-level memorization | B) Deep understanding of core principles | C) Random facts collection | D) Speed reading | Correct: B ###`,
-    `### Q: Which approach is most effective for learning ${topic}? | A) Passive reading only | B) Active practice and application | C) Ignoring foundational concepts | D) Skipping directly to advanced topics | Correct: B ###`,
-    `### Q: ${topic} is best described as: | A) An isolated field with no connections | B) A static, unchanging body of knowledge | C) An evolving field with practical applications | D) Only theoretical with no real-world use | Correct: C ###`,
-    `### Q: To master ${topic}, one should: | A) Memorize everything without understanding | B) Build from foundations to advanced concepts | C) Skip the basics | D) Only study the night before an exam | Correct: B ###`,
-    `### Q: The most important skill in studying ${topic} is: | A) Speed memorization | B) Critical thinking and analysis | C) Avoiding questions | D) Copying notes without reading | Correct: B ###`
+    `### Q: What is the primary focus of ${topic}? | A) Surface-level memorization | B) Deep understanding of core principles | C) Random facts collection | D) Speed reading | Correct: B | Area: Definitions ###`,
+    `### Q: Which approach is most effective for learning ${topic}? | A) Passive reading only | B) Active practice and application | C) Ignoring foundational concepts | D) Skipping directly to advanced topics | Correct: B | Area: Study Strategy ###`,
+    `### Q: ${topic} is best described as: | A) An isolated field with no connections | B) A static body of knowledge | C) An evolving field with practical applications | D) Only theoretical with no real-world use | Correct: C | Area: Core Concepts ###`,
+    `### Q: To master ${topic}, one should: | A) Memorize everything without understanding | B) Build from foundations to advanced concepts | C) Skip the basics | D) Only study before an exam | Correct: B | Area: Foundations ###`,
+    `### Q: The most important skill in studying ${topic} is: | A) Speed memorization | B) Critical thinking and analysis | C) Avoiding questions | D) Copying notes without reading | Correct: B | Area: Reasoning ###`,
+    `### Q: A good first example for ${topic} should be: | A) Huge and complex | B) Small enough to trace step by step | C) Unrelated to the concept | D) Hidden behind jargon | Correct: B | Area: Application ###`,
+    `### Q: If a learner cannot explain ${topic} simply, they likely need to improve: | A) Font size | B) Foundational understanding | C) Test speed only | D) Note color | Correct: B | Area: Communication ###`,
+    `### Q: What makes a misconception dangerous in ${topic}? | A) It can feel correct while causing wrong decisions | B) It is always obvious | C) It never affects practice | D) It only appears in old books | Correct: A | Area: Misconceptions ###`,
+    advanced
+      ? `### Q: In an unfamiliar ${topic} scenario, the best move is to: | A) Match surface keywords only | B) Identify the underlying principle before choosing a method | C) Guess the longest option | D) Ignore constraints | Correct: B | Area: Advanced Application ###`
+      : `### Q: When stuck on ${topic}, the best next step is to: | A) Restart from one clear definition | B) Skip the topic forever | C) Memorize random examples | D) Avoid practice | Correct: A | Area: Recovery Strategy ###`,
+    advanced
+      ? `### Q: Which answer best shows advanced understanding of ${topic}? | A) Repeating a definition | B) Explaining tradeoffs and when the idea fails | C) Naming the topic only | D) Choosing a shortcut without reason | Correct: B | Area: Edge Cases ###`
+      : `### Q: A strong sign you understand ${topic} is that you can: | A) Teach one example without notes | B) Only recognize the title | C) Avoid questions | D) Copy the textbook exactly | Correct: A | Area: Recall ###`
   ].join("\n");
 }
 
@@ -762,6 +820,29 @@ function generateGenericPodcast(topic: string, mood: string): string {
 **Host A:** That's all for today. Until next time, keep learning and stay curious!`;
 }
 
+function generateGenericReel(topic: string, mood: string): string {
+  const hook = mood === "funny"
+    ? "This topic looks scary, but it is mostly wearing a fake mustache."
+    : mood === "strict"
+      ? "No fluff. We define it, test it, and use it."
+      : "This is one of those ideas that clicks fast with the right example.";
+
+  return [
+    `A: ${hook}`,
+    `B: So what is ${topic} in one clean sentence?`,
+    `A: It is the core idea, rule, or system that helps us solve a real problem.`,
+    `B: That sounds broad. Give me the student version.`,
+    `A: First learn what it controls, then learn the steps, then try one example.`,
+    `B: What mistake do beginners usually make?`,
+    `A: They memorize words before they understand the job each part is doing.`,
+    `B: So the trick is to ask why each part exists.`,
+    `A: Exactly. Once the why is clear, the how becomes much easier.`,
+    `B: Quick test: if I can teach it back with an example, I probably get it.`,
+    `A: Perfect. That is active recall, and it beats rereading every time.`,
+    `B: Save this, replay it, then explain ${topic} without looking.`
+  ].join("\n");
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    MAIN PUBLIC API
    ═══════════════════════════════════════════════════════════════════ */
@@ -779,6 +860,10 @@ export interface GenerateOptions {
   grade?: string;
   collegeYear?: string;
   major?: string;
+  goal?: string;
+  experienceLevel?: string;
+  profileContext?: string;
+  quizDifficulty?: string;
 }
 
 export interface GenerateResult {
@@ -794,17 +879,19 @@ export function generateContent(opts: GenerateOptions): GenerateResult {
   if (opts.activeTab === "learn") {
     if (opts.learnFormat === "flashcards") {
       content = kb ? generateKBFlashcards(kb) : generateGenericFlashcards(opts.topic);
+    } else if (opts.learnFormat === "reel") {
+      content = kb ? generateKBReel(kb, opts.mood) : generateGenericReel(opts.topic, opts.mood);
     } else if (opts.learnFormat === "podcast") {
       content = kb ? generateKBPodcast(kb, opts.mood) : generateGenericPodcast(opts.topic, opts.mood);
     } else {
       // lecture
       content = kb
-        ? generateKBLecture(kb, opts.learningStyle, opts.mood, opts.timeAvailable, opts.eduLevel, opts.grade)
-        : generateGenericLecture(opts.topic, opts.learningStyle, opts.mood, opts.timeAvailable, opts.eduLevel);
+        ? generateKBLecture(kb, opts.learningStyle, opts.mood, opts.timeAvailable, opts.eduLevel, opts.grade, opts.goal, opts.experienceLevel, opts.profileContext)
+        : generateGenericLecture(opts.topic, opts.learningStyle, opts.mood, opts.timeAvailable, opts.eduLevel, opts.goal, opts.experienceLevel, opts.profileContext);
     }
   } else if (opts.activeTab === "quiz") {
     if (opts.quizFormat === "mcq") {
-      content = kb ? generateKBMCQ(kb) : generateGenericMCQ(opts.topic);
+      content = kb ? generateKBMCQ(kb, opts.quizDifficulty) : generateGenericMCQ(opts.topic, opts.quizDifficulty);
     } else {
       content = kb ? generateKBRapid(kb) : generateGenericRapid(opts.topic);
     }
@@ -845,7 +932,7 @@ export function generateFollowUp(question: string, originalTopic: string): strin
    KB-BASED GENERATORS (use pre-built knowledge)
    ═══════════════════════════════════════════════════════════════════ */
 
-function generateKBLecture(kb: TopicKnowledge, style: string, mood: string, time: string, eduLevel: string, grade?: string): string {
+function generateKBLecture(kb: TopicKnowledge, style: string, mood: string, time: string, eduLevel: string, grade?: string, goal = "concept", experience = "beginner", profileContext = "general learning"): string {
   const length = getContentLength(time);
   let sections: string[] = [];
 
@@ -898,7 +985,8 @@ function generateKBLecture(kb: TopicKnowledge, style: string, mood: string, time
 
   let result = sections.join("\n\n");
   result = adjustForEduLevel(result, eduLevel, grade);
-  result = applyMood(result, mood);
+  result = applyProfileFrame(result, goal, experience, profileContext, style);
+  result = applyAdaptiveTone(result, mood);
   return result;
 }
 
@@ -960,10 +1048,52 @@ ${Object.entries(kb.definitions).slice(0, 3).map(([term, def]) => `- **${term}**
 **Host B:** And remember — understanding beats memorizing every single time. Until next time!`;
 }
 
-function generateKBMCQ(kb: TopicKnowledge): string {
-  return kb.mcqs.map(q =>
-    `### Q: ${q.q} | A) ${q.a} | B) ${q.b} | C) ${q.c} | D) ${q.d} | Correct: ${q.correct} ###`
-  ).join("\n");
+function generateKBReel(kb: TopicKnowledge, mood: string): string {
+  const points = kb.keyPoints;
+  const defs = Object.entries(kb.definitions);
+  const example = kb.examples[0] || points[0];
+  const analogy = kb.analogies[0] || `Think of ${kb.title} as a tool that turns confusion into a repeatable process.`;
+  const punch = mood === "funny"
+    ? "So the idea is not hard, it just likes dramatic entrances."
+    : mood === "strict"
+      ? "Clean definition, clean example, clean recall. That is the target."
+      : "Once the example lands, the whole topic starts feeling much smaller.";
+
+  return [
+    `A: Quick challenge. Explain ${kb.title} without making it boring.`,
+    `B: Easy. Start with the real job it does.`,
+    `A: The job is this: ${kb.summary.split(".")[0]}.`,
+    `B: Good. What is the first must-know point?`,
+    `A: ${points[0]}.`,
+    `B: And the mistake students make?`,
+    `A: They skip the foundation and jump straight into details.`,
+    `B: Give me one example that makes it stick.`,
+    `A: ${example}.`,
+    `B: Now make it memorable.`,
+    `A: ${analogy}`,
+    `B: What should I be able to define after this?`,
+    `A: ${defs[0] ? `${defs[0][0]} means ${defs[0][1]}` : points[1] || kb.title}.`,
+    `B: Final rule?`,
+    `A: ${punch}`
+  ].join("\n");
+}
+
+function generateKBMCQ(kb: TopicKnowledge, difficulty = "basic"): string {
+  const base = kb.mcqs.map((q, index) =>
+    `### Q: ${q.q} | A) ${q.a} | B) ${q.b} | C) ${q.c} | D) ${q.d} | Correct: ${q.correct} | Area: ${["Definitions", "Core Concepts", "Technical Details", "Application", "Misconceptions"][index % 5]} ###`
+  );
+  const defs = Object.entries(kb.definitions).slice(0, 3).map(([term, def], index) =>
+    `### Q: Which statement best explains ${term}? | A) ${def} | B) An unrelated detail with no learning value | C) A memorized label without meaning | D) A random example only | Correct: A | Area: Definitions ###`
+  );
+  const advanced = [
+    `### Q: A learner understands ${kb.title} deeply when they can: | A) Recite one phrase | B) Explain tradeoffs, examples, and common mistakes | C) Avoid applying it | D) Only identify the title | Correct: B | Area: Advanced Reasoning ###`,
+    `### Q: In a tricky ${kb.title} question, what should you inspect first? | A) Surface keywords only | B) The underlying constraint or rule being tested | C) The longest answer | D) The easiest-looking option | Correct: B | Area: Edge Cases ###`
+  ];
+  const basic = [
+    `### Q: What is the safest way to start learning ${kb.title}? | A) Define the core terms | B) Skip to the hardest example | C) Ignore mistakes | D) Memorize unrelated facts | Correct: A | Area: Foundations ###`,
+    `### Q: Which habit improves recall for ${kb.title}? | A) Teaching one example aloud | B) Passive rereading only | C) Avoiding quizzes | D) Copying without thinking | Correct: A | Area: Recall ###`
+  ];
+  return [...base, ...defs, ...(difficulty === "advanced" ? advanced : basic)].slice(0, 10).join("\n");
 }
 
 function generateKBRapid(kb: TopicKnowledge): string {

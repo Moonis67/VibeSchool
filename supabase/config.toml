@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.transform-vibe]
 verify_jwt = false
+
+[functions.cleanup-temp-storage]
+verify_jwt = false

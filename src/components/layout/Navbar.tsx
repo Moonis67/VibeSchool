@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Sparkles, LogOut, User, Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { clearSensitiveClientState } from "@/lib/security";
 
 export const Navbar = () => {
   const navigate = useNavigate();
@@ -31,6 +32,7 @@ export const Navbar = () => {
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
+    clearSensitiveClientState();
     navigate("/auth");
   };
 

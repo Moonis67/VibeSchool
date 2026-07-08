@@ -23,6 +23,7 @@ import {
   PlayCircle,
 } from "lucide-react";
 import { SUBJECTS_LIST } from "@/data/subjectContent";
+import { clearSensitiveClientState } from "@/lib/security";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -51,7 +52,7 @@ const Dashboard = () => {
       setFullName(data?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || "Scholar");
       setAvatarUrl(data?.avatar_url || user.user_metadata?.avatar_url || null);
     } catch (err: any) {
-      console.error("Dashboard identity sync fault:", err.message);
+      toast.error("Could not refresh profile details.");
     }
   };
 
@@ -69,10 +70,11 @@ const Dashboard = () => {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
+      clearSensitiveClientState();
       toast.success("Signed out successfully.");
       navigate("/");
     } catch (err: any) {
-      toast.error("Failed to sign out: " + err.message);
+      toast.error("Failed to sign out.");
     }
   };
 

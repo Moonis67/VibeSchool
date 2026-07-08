@@ -11,7 +11,7 @@ DROP INDEX IF EXISTS idx_document_sections_embedding;
 -- 2. Create an HNSW index that works with ANY number of rows
 CREATE INDEX idx_document_sections_embedding
   ON public.document_sections
-  USING hnsw (embedding vector_cosine_ops)
+  USING hnsw (embedding extensions.vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);
 
 -- 3. Verify: Check if document_sections has data

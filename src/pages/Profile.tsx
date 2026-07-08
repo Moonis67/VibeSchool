@@ -16,6 +16,7 @@ const Profile = () => {
   const [uploading, setUploading] = useState(false);
   const [fullName, setFullName] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const allowedAvatarTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
   useEffect(() => {
     fetchProfileData();
@@ -52,6 +53,10 @@ const Profile = () => {
       const file = e.target.files?.[0];
       if (!file) return;
       setUploading(true);
+
+      if (!allowedAvatarTypes.has(file.type) || file.size > 5 * 1024 * 1024) {
+        throw new Error("Invalid avatar upload.");
+      }
 
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Session expired.");
@@ -90,7 +95,7 @@ const Profile = () => {
       setAvatarUrl(publicUrl);
       toast.success("Profile photo synchronized!");
     } catch (err: any) {
-      toast.error("File upload failed: " + err.message);
+      toast.error("File upload failed. Use a JPG, PNG, or WebP image under 5 MB.");
     } finally {
       setUploading(false);
     }
@@ -115,7 +120,7 @@ const Profile = () => {
       toast.success("Changes saved successfully!");
       navigate("/dashboard");
     } catch (err: any) {
-      toast.error("Sync failure: " + err.message);
+      toast.error("Could not save profile changes.");
     } finally {
       setLoading(false);
     }

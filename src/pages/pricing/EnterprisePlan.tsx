@@ -62,7 +62,6 @@ const EnterprisePlan = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Contact form submitted:", formData);
     // You can add Supabase logic here later to save this to a 'contact_requests' table
   };
 

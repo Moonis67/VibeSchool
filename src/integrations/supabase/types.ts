@@ -46,6 +46,47 @@ export type Database = {
           }
         ]
       }
+      documents: {
+        Row: {
+          document_id: string
+          user_id: string
+          file_name: string
+          file_hash: string | null
+          processing_status: string
+          chunk_count: number
+          processed_at: string | null
+          created_at: string
+        }
+        Insert: {
+          document_id?: string
+          user_id: string
+          file_name: string
+          file_hash?: string | null
+          processing_status?: string
+          chunk_count?: number
+          processed_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          document_id?: string
+          user_id?: string
+          file_name?: string
+          file_hash?: string | null
+          processing_status?: string
+          chunk_count?: number
+          processed_at?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "documents_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       materials: {
         Row: {
           id: string

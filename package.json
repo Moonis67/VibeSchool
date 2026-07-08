@@ -9,7 +9,8 @@
     "postbuild": "node -e \"const fs=require('fs'); const p='dist/_redirects'; if (fs.existsSync(p)) fs.rmSync(p);\"",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "worker:documents": "node --env-file=.env workers/document-worker.mjs"
   },
   "dependencies": {
     "@fontsource/plus-jakarta-sans": "^5.2.8",
@@ -50,6 +51,8 @@
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "^12.23.26",
     "input-otp": "^1.4.2",
+    "aws4fetch": "^1.0.20",
+    "jszip": "^3.10.1",
     "katex": "^0.16.28",
     "lucide-react": "^0.462.0",
     "mermaid": "^11.12.2",

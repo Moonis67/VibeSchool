@@ -115,14 +115,14 @@ CREATE TABLE IF NOT EXISTS public.document_sections (
   id           BIGSERIAL PRIMARY KEY,
   material_id  UUID NOT NULL REFERENCES public.materials(id) ON DELETE CASCADE,
   content      TEXT NOT NULL,
-  embedding    vector(384),
+  embedding    extensions.vector(384),
   created_at   TIMESTAMPTZ DEFAULT now()
 );
 
 -- Create an HNSW index for fast similarity search (works with any dataset size)
 CREATE INDEX IF NOT EXISTS idx_document_sections_embedding
   ON public.document_sections
-  USING hnsw (embedding vector_cosine_ops)
+  USING hnsw (embedding extensions.vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);
 
 ALTER TABLE public.document_sections ENABLE ROW LEVEL SECURITY;
@@ -149,7 +149,7 @@ END $$;
 -- Uses cosine similarity (1 - distance) against the query embedding
 -- ────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.match_document_sections(
-  embedding vector(384),
+  embedding extensions.vector(384),
   match_threshold FLOAT DEFAULT 0.2,
   match_count INT DEFAULT 4,
   filter_material_id UUID DEFAULT NULL
