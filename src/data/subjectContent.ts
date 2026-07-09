@@ -93,9 +93,9 @@ export const SUBJECT_CONTENT: Record<string, SubjectContent> = {
     title: "Physics & The Universe",
     description: "Understand the fundamental laws governing matter, energy, and spacetime.",
     videos: [
-      { title: "Physics in 6 Minutes", url: "https://www.youtube.com/watch?v=fFsmY99688o", channel: "Arcanum", views: "1.2M views" },
+      { title: "Motion in a Straight Line: Crash Course Physics #1", url: "https://www.youtube.com/watch?v=ZM8ECpBuQYE", channel: "CrashCourse", views: "2M views" },
       { title: "Newton's Laws of Motion", url: "https://www.youtube.com/watch?v=kKKM8Y-u7ds", channel: "Professor Dave", views: "3M views" },
-      { title: "Quantum Physics for 7 Year Olds", url: "https://www.youtube.com/watch?v=ARWBdfWpDjc", channel: "DS", views: "5M views" }
+      { title: "Quantum Physics for 7 Year Olds", url: "https://www.youtube.com/watch?v=ARWBdfWpDyc", channel: "TEDx Talks", views: "5M views" }
     ],
     topics: [
       { title: "Kinematics 1D", content: "Motion in a straight line: Displacement, Velocity, Acceleration.", questions: [{ q: "Change in velocity is?", options: ["Acceleration", "Speed", "Jerk"], ans: "Acceleration" }] },
@@ -138,7 +138,7 @@ export const SUBJECT_CONTENT: Record<string, SubjectContent> = {
     videos: [
       { title: "Map of Computer Science", url: "https://www.youtube.com/watch?v=SzJ46YA_RaA", channel: "Domain of Science", views: "6.2M views" },
       { title: "Sort Algorithms Visualized", url: "https://www.youtube.com/watch?v=kPRA0W1kECg", channel: "Geek", views: "15M views" },
-      { title: "100 Seconds of Code", url: "https://www.youtube.com/watch?v=SdmL1X2Rjhs", channel: "Fireship", views: "2M views" }
+      { title: "React in 100 Seconds", url: "https://www.youtube.com/watch?v=Tn6-PIqc4UM", channel: "Fireship", views: "2M views" }
     ],
     topics: [
       { title: "Binary & Data Representation", content: "Bits, Bytes, Hexadecimal, ASCII, Unicode.", questions: [{ q: "Bits in a Byte?", options: ["8", "16", "32"], ans: "8" }] },
@@ -223,7 +223,7 @@ export const SUBJECT_CONTENT: Record<string, SubjectContent> = {
     description: "Journey through time, from ancient civilizations to the modern era.",
     videos: [
       { title: "History of the Entire World", url: "https://www.youtube.com/watch?v=xuCn8ux2gbs", channel: "Bill Wurtz", views: "150M views" },
-      { title: "WWI Oversimplified", url: "https://www.youtube.com/watch?v=dHSQAEam2jc", channel: "OverSimplified", views: "25M views" },
+      { title: "WWI Oversimplified", url: "https://www.youtube.com/watch?v=dHSQAEam2yc", channel: "OverSimplified", views: "25M views" },
       { title: "Ancient Egypt 101", url: "https://www.youtube.com/watch?v=hO1tzmi1V5g", channel: "NatGeo", views: "5M views" }
     ],
     topics: [
@@ -266,7 +266,7 @@ export const SUBJECT_CONTENT: Record<string, SubjectContent> = {
     description: "Appreciate human creativity through painting, sculpture, and design history.",
     videos: [
       { title: "Understanding Color Theory", url: "https://www.youtube.com/watch?v=L1CK9bE3H_s", channel: "Blender Guru", views: "4M views" },
-      { title: "Art History in 10 Minutes", url: "https://www.youtube.com/watch?v=rDS4d13fXg8", channel: "SmartHistory", views: "1M views" },
+      { title: "Why We Study Art: Crash Course Art History #1", url: "https://www.youtube.com/watch?v=t6Wc7OMks4U", channel: "CrashCourse", views: "1M views" },
       { title: "Why is Modern Art so Bad?", url: "https://www.youtube.com/watch?v=lNI07egoefc", channel: "PragerU", views: "8M views" }
     ],
     topics: [

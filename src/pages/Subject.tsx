@@ -12,6 +12,16 @@ import {
   Play, ListVideo, BrainCircuit, ChevronDown, ChevronUp, BookOpen
 } from "lucide-react";
 
+const getYoutubeId = (url: string) => {
+  const watchMatch = url.match(/[?&]v=([^&]+)/);
+  if (watchMatch) return watchMatch[1];
+  const shortMatch = url.match(/youtu\.be\/([^?&]+)/);
+  if (shortMatch) return shortMatch[1];
+  const embedMatch = url.match(/embed\/([^?&]+)/);
+  if (embedMatch) return embedMatch[1];
+  return "";
+};
+
 const Subject = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -71,7 +81,21 @@ const Subject = () => {
     );
   }
 
-  if (!subjectData) return <div className="p-10 text-center">Subject not found.</div>;
+  if (!subjectData) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col font-sans w-full overflow-x-hidden">
+        <main className="flex-1 w-full app-container py-8 lg:py-10 flex flex-col items-center justify-center text-center gap-4">
+          <h1 className="text-2xl font-extrabold tracking-tight">Subject not found</h1>
+          <p className="text-muted-foreground max-w-md">
+            We couldn't find a subject matching "{id}". Pick one from the Knowledge Library instead.
+          </p>
+          <Button className="gap-2 rounded-xl" onClick={() => navigate('/subjects')}>
+            <ArrowLeft className="w-4 h-4" /> Back to Subjects
+          </Button>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col font-sans w-full overflow-x-hidden">
@@ -123,10 +147,10 @@ const Subject = () => {
               <div className="space-y-3">
                   <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-2xl border-4 border-slate-100 dark:border-slate-800">
                     {activeVideo && (
-                      <ReactPlayer 
-                          url={activeVideo.url} 
-                          width="100%" 
-                          height="100%" 
+                      <ReactPlayer
+                          src={activeVideo.url}
+                          width="100%"
+                          height="100%"
                           controls={true}
                           playing={false}
                       />
@@ -156,10 +180,10 @@ const Subject = () => {
                             className={`flex items-center gap-4 p-3 rounded-xl cursor-pointer transition-all border ${activeVideo?.url === vid.url ? 'bg-blue-50 border-blue-200 shadow-sm' : 'hover:bg-slate-50 border-transparent hover:border-slate-200'}`}
                         >
                             <div className="relative w-32 h-20 bg-slate-200 rounded-lg overflow-hidden flex-shrink-0 shadow-sm">
-                                <img 
-                                    src={`https://img.youtube.com/vi/${vid.url.split('v=')[1]?.split('&')[0]}/mqdefault.jpg`} 
-                                    alt="thumbnail" 
-                                    className="w-full h-full object-cover" 
+                                <img
+                                    src={`https://img.youtube.com/vi/${getYoutubeId(vid.url)}/mqdefault.jpg`}
+                                    alt="thumbnail"
+                                    className="w-full h-full object-cover"
                                 />
                                 <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                                     <Play className="w-8 h-8 text-white fill-white"/>

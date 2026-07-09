@@ -21,6 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
 import mermaid from "mermaid"; 
 import katex from "katex"; 
@@ -1099,6 +1100,17 @@ const documentFocusedSuggestions = (fileName?: string | null) => {
   ];
 };
 
+// Lightweight, purely client-side "what's next" chips for the reel side
+// panel — no extra AI call needed just to suggest a plausible follow-up.
+const reelFollowUpSuggestions = (topic: string) => {
+  const base = topic.replace(/\s*—.*$/, "").trim() || "this topic";
+  return [
+    `Go deeper into ${base}`,
+    `A real-world example of ${base}`,
+    `Common mistakes with ${base}`,
+  ];
+};
+
 const getUploadMimeType = (file: File) => {
   if (file.type) return file.type;
   const extension = file.name.split(".").pop()?.toLowerCase();
@@ -1328,6 +1340,9 @@ const EDGE_TTS_VOICES: TtsVoiceOption[] = [
 // strong default beats a menu of eight untested options. Podcast keeps its
 // own separate voice selector (EDGE_TTS_VOICES above) unaffected by this.
 const REEL_VOICE_ID = "en-US-AndrewNeural";
+// The one alternate voice the minimal reel player offers — a simple
+// default/female toggle via a single icon, not a full voice picker.
+const REEL_FEMALE_VOICE_ID = "en-US-AriaNeural";
 
 const EDGE_TTS_MIN_TIMEOUT_MS = 25000;
 const EDGE_TTS_MAX_TIMEOUT_MS = 90000;
@@ -1613,6 +1628,21 @@ const Transform = () => {
   const [videoHadError, setVideoHadError] = useState(false);
   const [isReelVideoPlaying, setIsReelVideoPlaying] = useState(false);
   const [isReelFullscreen, setIsReelFullscreen] = useState(false);
+  // Drives the "keep watching?" panel once a reel finishes playing on its
+  // own (not paused, not stopped mid-way) — lets the user ask for a deeper
+  // follow-up or a different topic instead of just hitting a dead end.
+  const [reelHasFinished, setReelHasFinished] = useState(false);
+  const [reelContinueTopic, setReelContinueTopic] = useState("");
+  // Minimal reel player extras: a default/female voice toggle (not a full
+  // picker), and a below-container script reveal instead of an always-open
+  // transcript panel.
+  const [reelVoiceId, setReelVoiceId] = useState(REEL_VOICE_ID);
+  const [showReelScript, setShowReelScript] = useState(false);
+  // Set right before generating a continuation script so the reel-script
+  // handler knows to skip the manual "Create Reel from this" step and build
+  // the playable reel immediately — a continuation should feel like the next
+  // episode auto-playing, not a fresh multi-step generation.
+  const autoCreateReelRef = useRef(false);
   const getPlaybackSpeed = () => parseFloat(playbackSpeedRef.current) || 1.15;
 
   const brainrotUrls = useMemo(() => extractVideoUrls(brainrotVideoLinks), []);
@@ -1975,6 +2005,9 @@ const Transform = () => {
       isCurrent?: () => boolean;
       onPlaybackStart?: () => void;
       onPlaybackEnd?: () => void;
+      // Fires only when audio finishes on its own — unlike onPlaybackEnd,
+      // never on error or on being superseded by a newer reel.
+      onNaturalEnd?: () => void;
       // Reels force the server engine + a fixed voice regardless of whatever
       // the podcast player's provider/voice pickers are currently set to —
       // those are separate, unrelated UI state that used to leak into reel
@@ -2061,6 +2094,7 @@ const Transform = () => {
       if (revokeAudioUrl) URL.revokeObjectURL(audioUrl);
       clearReelTimers();
       options?.onPlaybackEnd?.();
+      options?.onNaturalEnd?.();
       setIsTtsLoading(false);
       setIsSpeaking(false);
       setIsPaused(false);
@@ -2109,10 +2143,16 @@ const Transform = () => {
         isCurrent: () => reelSpeechRunRef.current === runId,
         onPlaybackStart: startReelVideo,
         onPlaybackEnd: resetReelVideo,
+        onNaturalEnd: () => setReelHasFinished(true),
         forceServerVoice: true,
-        voiceOverride: REEL_VOICE_ID,
+        voiceOverride: reelVoiceId,
       },
     );
+  };
+
+  const toggleReelVoice = () => {
+    if (isSpeaking) handleStop();
+    setReelVoiceId((current) => (current === REEL_VOICE_ID ? REEL_FEMALE_VOICE_ID : REEL_VOICE_ID));
   };
 
   const playBrowserReelSpeech = async (payload: ReelPayload) => {
@@ -2137,6 +2177,7 @@ const Transform = () => {
           setIsTtsLoading(false);
           setIsSpeaking(false);
           setIsPaused(false);
+          setReelHasFinished(true);
         }
         return;
       }
@@ -2237,6 +2278,7 @@ const Transform = () => {
     handleStop();
     resetReelVideo();
     setVideoHadError(false);
+    setReelHasFinished(false);
 
     try {
       const usedServerVoice = await tryPlayServerReel(payload);
@@ -2864,6 +2906,13 @@ const Transform = () => {
     }
     setUserTopic(focus);
     setIsFocusPickerOpen(false);
+    // Reopening a tool that already has a cached result (selectStudioTool)
+    // shows that old result via reuseGeneratedArtifact. Without this reset,
+    // clicking Generate right after that appended a second, freshly
+    // generated block below it instead of replacing it — the reel/flashcard
+    // "two scripts at once" bug. Generate should always mean "show me only
+    // what I just asked for" inside a tool workspace.
+    if (isToolWorkspaceOpen) setToolSessionStart(contentStream.length);
     const toolLabel = getActiveToolLabel();
     currentGenerationRequestRef.current = {
       title: toolLabel,
@@ -2905,7 +2954,7 @@ const Transform = () => {
       const steps = rawContent.split("###").map((s:string) => {
         const p = s.split("|");
         return p.length >= 2 ? { title: p[0].trim(), desc: p[1].trim(), time: p[2]?.trim() } : null;
-      }).filter((step): step is RoadmapStep => Boolean(step));
+      }).filter((step): step is NonNullable<typeof step> => step !== null) as RoadmapStep[];
       setRoadmapData(steps);
       addGenerationArtifact({ type: "roadmap", data: steps, role: "ai", topic: topicContext }, topicContext);
     } else if (activeTab === "quiz") {
@@ -2921,14 +2970,42 @@ const Transform = () => {
         addGenerationArtifact(block, topicContext);
         setTimeout(() => handleSpeak(rawContent, 0), 500);
       } else if (learnFormat === 'reel') {
-        // Show the reel script as text first — user manually clicks "Create Reel" after
-        const block: ContentBlock = { type: 'reel-script', data: rawContent, role: 'ai', topic: topicContext || "this topic", animate: true };
+        const reelTopic = topicContext || "this topic";
+        const block: ContentBlock = { type: 'reel-script', data: rawContent, role: 'ai', topic: reelTopic, animate: true };
+        setContentStream(prev => [...prev, block]);
+        addGenerationArtifact(block, topicContext);
+        if (autoCreateReelRef.current) {
+          // A "keep watching?" continuation — skip the manual "Create Reel
+          // from this" step and go straight to a playable, auto-playing reel.
+          autoCreateReelRef.current = false;
+          handleCreateReelFromScript(rawContent, reelTopic, true);
+        }
+        // Otherwise: show the reel script as text first — user manually
+        // clicks "Create Reel from this" when they generated it directly.
+      } else if (learnFormat === 'flashcards') {
+        // Primary format: one self-contained "### CARD: term | answer ###"
+        // per line — matches the same delimited micro-format the quiz prompt
+        // already uses reliably. Far more robust than a bare "---" divider,
+        // which asked the model to remember to insert a separator *between*
+        // every pair of 7 items and was frequently under-followed (e.g. only
+        // 1-2 dividers instead of 6, collapsing most cards together).
+        const cardMatches = [...rawContent.matchAll(/###\s*CARD:\s*(.+?)\s*\|\s*(.+?)\s*###/gi)];
+        let cards = cardMatches.map(([, term, answer]) => `**${term.trim()}** — ${answer.trim()}`);
+
+        if (cards.length <= 1) {
+          // Model ignored the CARD format entirely — fall back to a legacy
+          // "---" split, then to blank-line paragraphs, so a full chat-style
+          // answer never renders as one giant "1 / 1" flashcard.
+          cards = rawContent.split(/\n?-{3,}\n?/).map((x) => x.trim()).filter((x) => x.length > 5);
+        }
+        if (cards.length <= 1) {
+          cards = rawContent.split(/\n{2,}/).map((x) => x.trim()).filter((x) => x.length > 5);
+        }
+        const block: ContentBlock = { type: 'cards', data: cards, role: 'ai', topic: topicContext };
         setContentStream(prev => [...prev, block]);
         addGenerationArtifact(block, topicContext);
       } else {
-        const type = learnFormat === 'flashcards' ? 'cards' : 'text';
-        const payload = learnFormat === 'flashcards' ? rawContent.split("---").filter((x:string)=>x.length>10) : rawContent;
-        const block: ContentBlock = { type, data: payload, role: 'ai', animate: type === 'text', topic: topicContext };
+        const block: ContentBlock = { type: 'text', data: rawContent, role: 'ai', animate: true, topic: topicContext };
         setContentStream(prev => [...prev, block]);
         addGenerationArtifact(block, topicContext);
       }
@@ -3092,12 +3169,16 @@ const Transform = () => {
       // this insert used to claim a hardcoded, made-up weak area before a
       // single question had even been shown, which was never real data.
       if (session?.user) {
-         await supabase.from('user_session_history').insert({
-            user_id: session.user.id,
-            last_topic: topic,
-            weak_areas: activeTab === 'quiz' ? [] : ['General Recall Bounds'],
-            suggestions: materialId ? documentFocusedSuggestions(primaryDocumentLabel) : [`Re-run customized logic checks parameters inside ${topic}`]
-         }).catch(() => {});
+         try {
+           await supabase.from('user_session_history').insert({
+              user_id: session.user.id,
+              last_topic: topic,
+              weak_areas: activeTab === 'quiz' ? [] : ['General Recall Bounds'],
+              suggestions: materialId ? documentFocusedSuggestions(primaryDocumentLabel) : [`Re-run customized logic checks parameters inside ${topic}`]
+           });
+         } catch {
+           // Best-effort log — a failure here shouldn't fail the whole generation.
+         }
       }
 
     } catch (e: unknown) {
@@ -3149,12 +3230,16 @@ const Transform = () => {
     void (async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) return;
-      await supabase.from('user_session_history').insert({
-        user_id: session.user.id,
-        last_topic: userTopic,
-        weak_areas: result.weakestArea ? [result.weakestArea] : [],
-        suggestions: result.weakestArea ? [`Dive deeper into ${result.weakestArea}`] : [],
-      }).catch(() => {});
+      try {
+        await supabase.from('user_session_history').insert({
+          user_id: session.user.id,
+          last_topic: userTopic,
+          weak_areas: result.weakestArea ? [result.weakestArea] : [],
+          suggestions: result.weakestArea ? [`Dive deeper into ${result.weakestArea}`] : [],
+        });
+      } catch {
+        // Best-effort log — not worth surfacing a failure to the user here.
+      }
     })();
   };
 
@@ -3166,7 +3251,7 @@ const Transform = () => {
      handleGenerate(target);
   };
 
-  const handleCreateReelFromScript = (scriptText: string, topic: string) => {
+  const handleCreateReelFromScript = (scriptText: string, topic: string, autoPlay = false) => {
     if (isCreatingReel) return;
     setIsCreatingReel(true);
     try {
@@ -3184,15 +3269,38 @@ const Transform = () => {
       // "gave up on video" state left over from a previous reel attempt.
       reelVideoFailCountRef.current = 0;
       setVideoHadError(false);
+      setReelHasFinished(false);
+      setReelContinueTopic("");
       const block: ContentBlock = { type: 'reel', data: payload, role: 'ai', topic };
       setContentStream(prev => [...prev, block]);
       addGenerationArtifact(block, topic);
-      toast.success("Reel created! Press play to start.");
+      if (autoPlay) {
+        toast.success("Next reel is ready — playing now.");
+        void handlePlayReel(payload);
+      } else {
+        toast.success("Reel created! Press play to start.");
+      }
     } catch {
       toast.error("Failed to create reel from script.");
     } finally {
       setIsCreatingReel(false);
     }
+  };
+
+  // Kicks off the "keep watching?" flow: generates a new reel script for
+  // either a deeper follow-up on the same topic or a topic the user typed
+  // in, and auto-builds + auto-plays the reel once the script comes back
+  // (see the learnFormat === 'reel' branch of processRawContent) instead of
+  // requiring the usual manual "Create Reel from this" click.
+  const handleReelContinue = (nextTopic: string) => {
+    const cleaned = nextTopic.trim();
+    if (!cleaned) return;
+    setReelHasFinished(false);
+    setReelContinueTopic("");
+    autoCreateReelRef.current = true;
+    setLearnFormat('reel');
+    setUserTopic(cleaned);
+    void handleGenerate(cleaned);
   };
 
   const applyChatCommand = (command: ChatCommand) => {
@@ -3364,8 +3472,6 @@ const Transform = () => {
   const FeatureGuideIcon = currentFeatureGuide.icon;
   const activeStudioTool = STUDIO_TOOLS.find((tool) => isStudioToolActive(tool)) || STUDIO_TOOLS[0];
   const activeToolArtifact = activeStudioTool ? getToolArtifact(activeStudioTool) : null;
-  const latestReelScript = [...contentStream].reverse().find((block) => block.type === 'reel-script');
-  const latestReel = [...contentStream].reverse().find((block) => block.type === 'reel');
   const ActiveStudioToolIcon = activeStudioTool.icon;
   const activeToolAccent = accentClasses[activeStudioTool.accent || "indigo"];
   const visibleStream = isToolWorkspaceOpen ? contentStream.slice(toolSessionStart) : contentStream;
@@ -3373,6 +3479,14 @@ const Transform = () => {
     visibleStream.length > 0 ||
     (activeTab === "visualize" && Boolean(diagramCode)) ||
     (activeTab === "plan" && roadmapData.length > 0);
+  // Once a reel actually exists, its player has its own controls, script
+  // reveal, suggestions, and mini chat box built in — the "Open Reel"
+  // follow-up bar and the bottom focus/generate composer become pure
+  // clutter on top of it, so both are hidden to give the reel the full
+  // panel. Before that (still on the hero "tell it what to focus on" empty
+  // state), the bottom composer is still the only way to generate the first
+  // one, so this only kicks in once hasVisibleToolResult is true.
+  const isReelWorkspace = isToolWorkspaceOpen && activeStudioTool.id === "reel" && hasVisibleToolResult;
   const showToolHero = isToolWorkspaceOpen && Boolean(heroTool) && !hasVisibleToolResult && !isGenerating;
   const showToolFirstRunLoading = isToolWorkspaceOpen && isGenerating && !hasVisibleToolResult;
   const exitToolFocus = () => {
@@ -3753,27 +3867,6 @@ const Transform = () => {
                     </div>
                   )}
 
-                  {/* Reel-only follow-up actions on an already generated script */}
-                  {activeStudioTool.id === "reel" && hasVisibleToolResult && (latestReelScript || latestReel) && (
-                    <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#E8E4F5] bg-white/70 p-3">
-                      {latestReelScript && (
-                        <Button
-                          size="sm"
-                          className={`gap-1.5 rounded-xl text-[12px] font-bold text-white ${activeToolAccent.bg} hover:opacity-90`}
-                          onClick={() => handleCreateReelFromScript(String(latestReelScript.data), latestReelScript.topic || userTopic)}
-                          disabled={isCreatingReel}
-                        >
-                          {isCreatingReel ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clapperboard className="h-3.5 w-3.5" />}
-                          Create Reel from script
-                        </Button>
-                      )}
-                      {latestReel && !latestReelScript && (
-                        <Button size="sm" variant="outline" className="gap-1.5 rounded-xl text-[12px] font-bold" onClick={() => setContentStream((prev) => [...prev, latestReel])}>
-                          Open Reel
-                        </Button>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
               {showToolFirstRunLoading && (
@@ -3936,6 +4029,7 @@ const Transform = () => {
                         const captionWindow = getCaptionWindow(captionSourceWords, activeCaptionWord);
                         return (
                           <div className="max-w-4xl mx-auto grid gap-5 lg:grid-cols-[minmax(260px,380px)_1fr] items-start">
+                            <div className="space-y-2">
                             <div ref={reelStageRef} className="relative mx-auto w-full max-w-[380px] aspect-[9/16] overflow-hidden rounded-2xl bg-black shadow-lg border border-white/10 fullscreen:max-w-none fullscreen:h-screen fullscreen:w-screen fullscreen:rounded-none">
                               {!videoHadError && activeVideo ? (
                                 <video ref={reelVideoRef} key={activeVideo} src={activeVideo} className="absolute inset-0 h-full w-full object-cover" muted playsInline
@@ -3987,7 +4081,29 @@ const Transform = () => {
                                   </p>
                                 </div>
                               </div>
-                              <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-2.5">
+                              <div className="absolute bottom-4 left-0 right-0 flex items-center justify-center gap-2.5">
+                                <Popover>
+                                  <PopoverTrigger asChild>
+                                    <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full bg-white/15 text-white hover:bg-white/25" aria-label="Speed">
+                                      <Gauge className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </PopoverTrigger>
+                                  <PopoverContent align="center" side="top" className="w-auto p-1.5">
+                                    <div className="flex gap-1">
+                                      {["0.85", "1", "1.15", "1.3", "1.5"].map((speed) => (
+                                        <Button
+                                          key={speed}
+                                          size="sm"
+                                          variant={playbackSpeed === speed ? "default" : "ghost"}
+                                          className="h-7 rounded-full px-2 text-[11px]"
+                                          onClick={() => handleReelSpeedChange(speed)}
+                                        >
+                                          {speed}x
+                                        </Button>
+                                      ))}
+                                    </div>
+                                  </PopoverContent>
+                                </Popover>
                                 <Button size="icon" variant="secondary" className="h-9 w-9 rounded-full bg-white/90 text-black hover:bg-white" onClick={() => { setVideoHadError(false); setCurrentReelVideo((v) => (v + 1) % reel.videoUrls.length); }}>
                                   <RotateCcw className="h-3.5 w-3.5" />
                                 </Button>
@@ -3997,52 +4113,97 @@ const Transform = () => {
                                 <Button size="icon" variant="secondary" className="h-9 w-9 rounded-full bg-white/90 text-black hover:bg-white" onClick={handleStop}>
                                   <Square className="h-3.5 w-3.5 fill-current" />
                                 </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 rounded-full bg-white/15 text-white hover:bg-white/25"
+                                  onClick={toggleReelVoice}
+                                  aria-label={reelVoiceId === REEL_VOICE_ID ? "Switch to female voice" : "Switch to default voice"}
+                                  title={reelVoiceId === REEL_VOICE_ID ? "Andrew (default)" : "Aria (female)"}
+                                >
+                                  {reelVoiceId === REEL_VOICE_ID ? <Mic className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
+                                </Button>
                               </div>
-                            </div>
-                            {/* Reel transcript */}
-                            <div className="transform-card space-y-3 rounded-2xl p-4">
-                              <div className="flex items-center gap-2">
-                                <Captions className="h-4 w-4 text-[#6D35FF]" />
-                                <h3 className="text-[14px] font-extrabold text-[#111827]">{reel.topic}</h3>
-                              </div>
-                              <div className="grid grid-cols-3 gap-2 text-center">
-                                <div className="rounded-xl bg-[#F8F7FC] p-2"><div className="text-[14px] font-bold">{reel.segments.length}</div><div className="text-[9px] font-bold uppercase text-[#6B7280]">Lines</div></div>
-                                <div className="rounded-xl bg-[#F8F7FC] p-2"><div className="text-[14px] font-bold">Andrew</div><div className="text-[9px] font-bold uppercase text-[#6B7280]">Voice</div></div>
-                                <div className="rounded-xl bg-[#F8F7FC] p-2"><div className="text-[14px] font-bold">{playbackSpeed}x</div><div className="text-[9px] font-bold uppercase text-[#6B7280]">Speed</div></div>
-                              </div>
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                <div className="space-y-1">
-                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Voice</Label>
-                                  <div className="flex h-9 items-center gap-1.5 rounded-xl border border-[#E8E4F5] bg-white px-3 text-[12px] font-bold text-[#111827]">
-                                    <Mic className="h-3.5 w-3.5 shrink-0 text-[#6D35FF]" />
-                                    Edge TTS &middot; Andrew
+
+                              {/* Keep-watching panel — only over the most recently generated
+                                  reel, once it's finished playing on its own. */}
+                              {reelHasFinished && idx === visibleStream.length - 1 && (
+                                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 bg-black/85 p-5 text-center backdrop-blur-sm">
+                                  <p className="text-sm font-bold text-white">Keep learning about "{reel.topic}"?</p>
+                                  <div className="flex w-full flex-col gap-2">
+                                    <Button
+                                      className="w-full gap-1.5 rounded-full bg-white text-black hover:bg-white/90"
+                                      onClick={() => handleReelContinue(`${reel.topic} — go one level deeper into the next related concept, don't repeat what was just covered`)}
+                                    >
+                                      <ChevronRight className="h-4 w-4" /> Go deeper
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      className="w-full text-xs text-white/70 hover:bg-white/10 hover:text-white"
+                                      onClick={() => setReelHasFinished(false)}
+                                    >
+                                      Just watch again
+                                    </Button>
                                   </div>
                                 </div>
-                                <div className="space-y-1">
-                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Speed</Label>
-                                  <Select value={playbackSpeed} onValueChange={handleReelSpeedChange}>
-                                    <SelectTrigger className="h-9 rounded-xl border-[#E8E4F5] bg-white text-[12px] font-bold">
-                                      <Gauge className="mr-1.5 h-3.5 w-3.5 text-[#6D35FF]" />
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="0.85">0.85x</SelectItem>
-                                      <SelectItem value="1">1x</SelectItem>
-                                      <SelectItem value="1.15">1.15x</SelectItem>
-                                      <SelectItem value="1.3">1.3x</SelectItem>
-                                      <SelectItem value="1.5">1.5x</SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                              )}
+                            </div>
+
+                            {/* Script reveal — collapsed by default, sits below the player. */}
+                            <div className="mx-auto w-full max-w-[380px]">
+                              <button
+                                type="button"
+                                onClick={() => setShowReelScript((v) => !v)}
+                                className="flex w-full items-center justify-center gap-1.5 rounded-full border border-[#E8E4F5] bg-white py-1.5 text-[11px] font-bold text-[#6B7280] hover:bg-[#F3EEFF]/50"
+                              >
+                                <FileText className="h-3 w-3" />
+                                {showReelScript ? "Hide script" : "Show script"}
+                              </button>
+                              {showReelScript && (
+                                <div className="mt-2 max-h-52 space-y-1.5 overflow-y-auto rounded-2xl border border-[#E8E4F5] bg-white p-3">
+                                  {reel.segments.map((seg, si) => (
+                                    <button key={`${seg.speaker}-${si}`} onClick={() => { setCurrentReelSegment(si); setCurrentSentence(seg.text); setActiveCaptionWords(seg.text.split(/\s+/)); setActiveCaptionWord(0); }}
+                                      className={`w-full rounded-lg border p-2 text-left text-[12px] transition-all ${si === currentReelSegment ? 'border-[#6D35FF] bg-[#F3EEFF]' : 'bg-[#F8F7FC] hover:bg-[#F3EEFF]/50 border-transparent'}`}>
+                                      <span className="mb-0.5 block text-[9px] font-bold uppercase tracking-wider text-[#6D35FF]">Speaker {seg.speaker}</span>
+                                      <span className="font-medium leading-snug text-[#111827]">{seg.text}</span>
+                                    </button>
+                                  ))}
                                 </div>
-                              </div>
-                              <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
-                                {reel.segments.map((seg, si) => (
-                                  <button key={`${seg.speaker}-${si}`} onClick={() => { setCurrentReelSegment(si); setCurrentSentence(seg.text); setActiveCaptionWords(seg.text.split(/\s+/)); setActiveCaptionWord(0); }}
-                                    className={`w-full rounded-lg border p-2 text-left text-[12px] transition-all ${si === currentReelSegment ? 'border-[#6D35FF] bg-[#F3EEFF]' : 'bg-[#F8F7FC] hover:bg-[#F3EEFF]/50 border-transparent'}`}>
-                                    <span className="mb-0.5 block text-[9px] font-bold uppercase tracking-wider text-[#6D35FF]">Speaker {seg.speaker}</span>
-                                    <span className="font-medium leading-snug text-[#111827]">{seg.text}</span>
+                              )}
+                            </div>
+                            </div>
+
+                            {/* Minimal side panel — topic suggestions + a small chat box, nothing else. */}
+                            <div className="space-y-2.5">
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">More like this</p>
+                              <div className="flex flex-col gap-1.5">
+                                {reelFollowUpSuggestions(reel.topic).map((suggestion) => (
+                                  <button
+                                    key={suggestion}
+                                    onClick={() => handleReelContinue(suggestion)}
+                                    className="rounded-xl border border-[#E8E4F5] bg-white px-3 py-2 text-left text-[12px] font-semibold text-[#111827] hover:bg-[#F3EEFF]/50"
+                                  >
+                                    {suggestion}
                                   </button>
                                 ))}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Input
+                                  value={reelContinueTopic}
+                                  onChange={(e) => setReelContinueTopic(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === "Enter" && reelContinueTopic.trim()) handleReelContinue(reelContinueTopic); }}
+                                  placeholder="Or write your own topic…"
+                                  className="h-9 rounded-full text-[12px]"
+                                />
+                                <Button
+                                  size="icon"
+                                  className="h-9 w-9 shrink-0 rounded-full"
+                                  disabled={!reelContinueTopic.trim()}
+                                  onClick={() => handleReelContinue(reelContinueTopic)}
+                                  aria-label="Generate reel from this topic"
+                                >
+                                  <Send className="h-3.5 w-3.5" />
+                                </Button>
                               </div>
                             </div>
                           </div>
@@ -4120,8 +4281,9 @@ const Transform = () => {
 
             {/* Chat Input — sticky bottom. Swaps to the active tool's own focus + Generate
                 bar while a Studio tool is selected, instead of duplicating a second input
-                in the middle of the panel. */}
-            {isToolWorkspaceOpen && activeStudioTool ? (
+                in the middle of the panel. Hidden entirely for the reel workspace, which
+                has its own mini chat box built into its side panel instead. */}
+            {isReelWorkspace ? null : isToolWorkspaceOpen && activeStudioTool ? (
               <div className="transform-panel-header shrink-0 border-t p-3" style={{ borderColor: '#E8E4F5' }}>
                 <div className="flex items-end gap-2 rounded-xl border border-[#E8E4F5] bg-white/70 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
                   <Textarea

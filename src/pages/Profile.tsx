@@ -7,45 +7,43 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Loader2, Camera, Save, ArrowLeft, User } from "lucide-react";
+import { Loader2, Camera, Save, ArrowLeft, User, Check } from "lucide-react";
+import { getDefaultAvatarUrl } from "@/lib/avatar";
+import { useProfileSummary } from "@/hooks/useProfileSummary";
+
+// Preset illustrated avatars — same DiceBear "adventurer" set used as the
+// automatic default, offered here as deliberate choices instead of just a
+// single auto-assigned one.
+const PRESET_AVATAR_SEEDS = ["Nova", "Atlas", "Luna", "Orbit", "Quantum", "Sage", "Echo", "Nimbus"];
 
 const Profile = () => {
   const navigate = useNavigate();
+  // Shared, app-wide profile state — the sidebar, header, and mobile nav all
+  // read from this same store, so pushing a change into it via setProfile()
+  // (below) reflects everywhere instantly instead of only on this page.
+  const { fullName: sharedFullName, avatarUrl, refreshProfile, setProfile } = useProfileSummary();
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [choosingAvatar, setChoosingAvatar] = useState(false);
   const [fullName, setFullName] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const allowedAvatarTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
   useEffect(() => {
-    fetchProfileData();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) navigate("/");
+    });
+    void refreshProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchProfileData = async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        navigate("/");
-        return;
-      }
-
-      // FIXED: Changing to .maybeSingle() tolerates uninitialized rows safely
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("full_name, avatar_url")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (error) throw error;
-
-      setFullName(data?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || "Scholar");
-      setAvatarUrl(data?.avatar_url || user.user_metadata?.avatar_url || null);
-    } catch {
-      toast.error("Failed to load profile parameters.");
-    } finally {
+  // Seed the editable name field from the shared store once it's loaded
+  // (and keep it in sync if it changes from elsewhere).
+  useEffect(() => {
+    if (sharedFullName) {
+      setFullName(sharedFullName);
       setLoading(false);
     }
-  };
+  }, [sharedFullName]);
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
@@ -64,13 +62,13 @@ const Profile = () => {
       const filePath = `${user.id}/${Date.now()}.${fileExt}`;
 
       // FIXED: Content type overrides protect binary streams against .jfif browser detection errors
-      const forcedContentType = (fileExt === 'jfif' || fileExt === 'jpg' || fileExt === 'jpeg') 
-        ? 'image/jpeg' 
+      const forcedContentType = (fileExt === 'jfif' || fileExt === 'jpg' || fileExt === 'jpeg')
+        ? 'image/jpeg'
         : (file.type || 'image/jpeg');
 
       const { error: uploadError } = await supabase.storage
         .from("avatars")
-        .upload(filePath, file, { 
+        .upload(filePath, file, {
           upsert: true,
           contentType: forcedContentType
         });
@@ -84,19 +82,42 @@ const Profile = () => {
       // FIXED: Changing to .upsert() initializes the profile database row dynamically if it wasn't there
       const { error: updateError } = await supabase
         .from("profiles")
-        .upsert({ 
+        .upsert({
           id: user.id,
-          avatar_url: publicUrl 
+          avatar_url: publicUrl
         });
 
       if (updateError) throw updateError;
 
-      setAvatarUrl(publicUrl);
+      setProfile({ avatarUrl: publicUrl });
       toast.success("Profile photo synchronized!");
     } catch {
       toast.error("File upload failed. Use a JPG, PNG, or WebP image under 5 MB.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleChooseAvatar = async (seed: string) => {
+    if (choosingAvatar) return;
+    const presetUrl = getDefaultAvatarUrl(seed);
+    setChoosingAvatar(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Session expired.");
+
+      const { error } = await supabase
+        .from("profiles")
+        .upsert({ id: user.id, avatar_url: presetUrl });
+
+      if (error) throw error;
+
+      setProfile({ avatarUrl: presetUrl });
+      toast.success("Avatar updated!");
+    } catch {
+      toast.error("Could not set that avatar. Please try again.");
+    } finally {
+      setChoosingAvatar(false);
     }
   };
 
@@ -109,13 +130,14 @@ const Profile = () => {
       // FIXED: Changing to .upsert() creates the profile mapping row if missing
       const { error } = await supabase
         .from("profiles")
-        .upsert({ 
+        .upsert({
           id: user.id,
-          full_name: fullName, 
-          updated_at: new Date().toISOString() 
+          full_name: fullName,
+          updated_at: new Date().toISOString()
         });
 
       if (error) throw error;
+      setProfile({ fullName });
       toast.success("Changes saved successfully!");
       navigate("/dashboard");
     } catch {
@@ -135,7 +157,7 @@ const Profile = () => {
 
         <Card className="p-8 rounded-2xl border border-border shadow-md bg-card">
           <h2 className="text-xl font-extrabold mb-6 text-center tracking-tight">Edit Account Profile</h2>
-          
+
           <div className="flex flex-col items-center gap-6">
             {/* AVATAR UPLOAD TRIGGER ZONE */}
             <div className="relative w-28 h-28">
@@ -150,6 +172,36 @@ const Profile = () => {
                 {uploading ? <Loader2 className="animate-spin w-4 h-4" /> : <Camera className="w-4 h-4" />}
               </Label>
               <input id="profile-upload-file" type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} disabled={uploading} />
+            </div>
+
+            {/* PRESET AVATAR PICKER */}
+            <div className="w-full space-y-2">
+              <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Or choose an avatar</Label>
+              <div className="grid grid-cols-4 gap-2.5">
+                {PRESET_AVATAR_SEEDS.map((seed) => {
+                  const presetUrl = getDefaultAvatarUrl(seed);
+                  const isSelected = avatarUrl === presetUrl;
+                  return (
+                    <button
+                      key={seed}
+                      type="button"
+                      onClick={() => handleChooseAvatar(seed)}
+                      disabled={choosingAvatar}
+                      className={`relative aspect-square rounded-xl border-2 overflow-hidden bg-muted transition-all hover:scale-105 disabled:opacity-60 ${
+                        isSelected ? "border-primary ring-2 ring-primary/30" : "border-transparent hover:border-primary/40"
+                      }`}
+                      aria-label={`Use ${seed} avatar`}
+                    >
+                      <img src={presetUrl} alt="" className="w-full h-full object-cover" />
+                      {isSelected && (
+                        <span className="absolute inset-0 flex items-center justify-center bg-primary/20">
+                          <Check className="w-4 h-4 text-primary drop-shadow" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* IDENTITY TEXT ZONE */}
