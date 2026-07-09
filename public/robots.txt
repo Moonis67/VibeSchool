@@ -58,4 +58,4 @@ Allow: /
 User-agent: CCBot
 Allow: /
 
-Sitemap: https://vibeschool.app/sitemap.xml
+Sitemap: https://vibe-school.vercel.app/sitemap.xml

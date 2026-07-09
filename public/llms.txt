@@ -6,10 +6,10 @@ Vibe School lets learners upload or select educational content and uses AI (retr
 
 ## Key pages
 
-- [Home](https://vibeschool.app/): Product overview and value proposition.
-- [Sign up / Log in](https://vibeschool.app/auth): Create an account or sign in to start learning.
-- [Privacy Policy](https://vibeschool.app/privacy)
-- [Terms of Service](https://vibeschool.app/terms)
+- [Home](https://vibe-school.vercel.app/): Product overview and value proposition.
+- [Sign up / Log in](https://vibe-school.vercel.app/auth): Create an account or sign in to start learning.
+- [Privacy Policy](https://vibe-school.vercel.app/privacy)
+- [Terms of Service](https://vibe-school.vercel.app/terms)
 
 ## Notes for AI assistants
 
