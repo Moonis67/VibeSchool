@@ -95,15 +95,13 @@ serve(async (req) => {
       }, 413);
     }
 
+    // No documents row is created here — only a signed URL is issued. If the
+    // upload never lands (closed tab, dropped connection, etc.) nothing is
+    // ever written to the database or shown anywhere in the UI. The row is
+    // only created by enqueue-document-processing, once the client has
+    // confirmed the PUT to R2 actually succeeded.
     const documentId = crypto.randomUUID();
     const r2Key = buildTempR2Key(userData.user.id, documentId, fileName);
-    const { error: insertError } = await supabase.from("documents").insert({
-      document_id: documentId,
-      user_id: userData.user.id,
-      file_name: fileName,
-      processing_status: "uploading",
-    });
-    if (insertError) throw new Error(`Document metadata insert failed: ${insertError.message}`);
 
     // Large lectures are gzipped client-side before upload so they take less
     // room against the temp storage cap. The compression marker has to be a

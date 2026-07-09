@@ -10,7 +10,8 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "worker:documents": "node --env-file=.env workers/document-worker.mjs"
+    "worker:documents": "node --env-file=.env workers/document-worker.mjs",
+    "worker:tts": "node --env-file=.env workers/tts-server.mjs"
   },
   "dependencies": {
     "@fontsource/plus-jakarta-sans": "^5.2.8",
@@ -56,6 +57,7 @@
     "katex": "^0.16.28",
     "lucide-react": "^0.462.0",
     "mermaid": "^11.12.2",
+    "msedge-tts": "^2.0.6",
     "next-themes": "^0.3.0",
     "pdfjs-dist": "^5.4.624",
     "react": "^18.3.1",

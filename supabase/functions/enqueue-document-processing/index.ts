@@ -14,6 +14,17 @@ function getBearerToken(req: Request) {
   return match?.[1] || "";
 }
 
+function sanitizeFileName(name: string) {
+  const trimmed = name.split(/[\\/]/).pop() || "upload";
+  const safe = trimmed
+    .normalize("NFKD")
+    .replace(/[^\w.\- ]+/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+  return safe || "upload";
+}
+
 serve(async (req) => {
   const preflight = handleCorsPreflight(req);
   if (preflight) return preflight;
@@ -34,29 +45,42 @@ serve(async (req) => {
     const documentId = String(body?.document_id || "");
     if (!documentId) return jsonResponse(req, { error: "Missing document_id." }, 400);
 
-    const { data: documentRow, error: documentError } = await supabase
+    const { data: existingRow } = await supabase
       .from("documents")
       .select("document_id, processing_status")
       .eq("document_id", documentId)
       .eq("user_id", userData.user.id)
-      .single();
+      .maybeSingle();
 
-    if (documentError || !documentRow) {
-      return jsonResponse(req, { error: "Document was not found for this account." }, 404);
-    }
-    if (!["uploading", "uploaded", "queued", "failed"].includes(String(documentRow.processing_status))) {
-      return jsonResponse(req, { error: `Document is already ${documentRow.processing_status}.` }, 409);
-    }
+    if (!existingRow) {
+      // First time we hear about this document — the client only calls this
+      // once the R2 PUT has actually succeeded, so this is the earliest
+      // point a row is safe to create. Nothing is ever persisted for an
+      // upload that never lands.
+      const fileName = sanitizeFileName(String(body?.file_name || ""));
+      const fileSize = Number(body?.file_size || 0);
+      if (!fileName) return jsonResponse(req, { error: "Missing file_name." }, 400);
+      if (!Number.isFinite(fileSize) || fileSize <= 0) return jsonResponse(req, { error: "Missing or invalid file_size." }, 400);
 
-    const { error: updateError } = await supabase
-      .from("documents")
-      .update({
+      const { error: insertError } = await supabase.from("documents").insert({
+        document_id: documentId,
+        user_id: userData.user.id,
+        file_name: fileName,
+        size_bytes: fileSize,
         processing_status: "queued",
-      })
-      .eq("document_id", documentId)
-      .eq("user_id", userData.user.id);
-
-    if (updateError) throw new Error(`Document queue update failed: ${updateError.message}`);
+      });
+      if (insertError) throw new Error(`Document metadata insert failed: ${insertError.message}`);
+    } else {
+      if (!["queued", "failed"].includes(String(existingRow.processing_status))) {
+        return jsonResponse(req, { error: `Document is already ${existingRow.processing_status}.` }, 409);
+      }
+      const { error: updateError } = await supabase
+        .from("documents")
+        .update({ processing_status: "queued" })
+        .eq("document_id", documentId)
+        .eq("user_id", userData.user.id);
+      if (updateError) throw new Error(`Document queue update failed: ${updateError.message}`);
+    }
 
     return jsonResponse(req, {
       success: true,

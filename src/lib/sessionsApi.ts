@@ -56,7 +56,7 @@ export const deleteSession = (sessionId: string) =>
   callSessions<{ success: true }>("delete", { session_id: sessionId });
 
 export const openSession = (sessionId: string) =>
-  callSessions<{ sources: SessionSourceRow[] }>("open", { session_id: sessionId }).then((res) => res.sources);
+  callSessions<{ session: VibeSession; sources: SessionSourceRow[] }>("open", { session_id: sessionId });
 
 export const listLibrary = (sessionId?: string) =>
   callSessions<{ files: LibraryFile[] }>("library", sessionId ? { session_id: sessionId } : {}).then((res) => res.files);

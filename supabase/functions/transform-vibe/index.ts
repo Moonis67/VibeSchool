@@ -202,6 +202,10 @@ serve(async (req) => {
     const profileContext = clampText(body.profileContext, 200);
     const quizDifficulty = enumValue(body.quizDifficulty, ["basic", "advanced"], "basic");
     const quizFormat = enumValue(body.quizFormat, ["mcq", "rapid"], "mcq");
+    // Set by the "dive deeper" action after a quiz result — the weakest
+    // scoring Area from the previous attempt, so the next quiz can weight
+    // itself toward it instead of just being a flat re-roll of the topic.
+    const focusArea = clampText(body.focus_area, 200);
     const learnFormat = enumValue(body.learnFormat, ["lecture", "flashcards", "podcast", "reel"], "lecture");
     const vizFormat = enumValue(body.vizFormat, ["flowchart", "dld"], "flowchart");
 
@@ -461,15 +465,22 @@ serve(async (req) => {
 
       // Adjust task targets based on application menu flags
       if (activeTab === "visualize") {
-        finalUserPrompt = `Output ONLY raw, clean Mermaid JS diagram code representing a ${vizFormat || 'flowchart'} for ${lessonTarget}. Do not wrap it in markdown code blocks.`;
+        if (vizFormat === "dld") {
+          finalUserPrompt = `Output ONLY raw, clean Mermaid JS diagram code ("graph LR") for a digital logic / circuit-style diagram of "${lessonTarget}". Model every input, logic gate (AND, OR, NOT, NAND, NOR, XOR), sub-process, and output as its OWN node, each labelled with its real, specific signal or concept name from ${lessonTarget} (e.g. "A", "B", "Carry In", "Sum") — never generic placeholders like "Processing Unit", "Analysis Gate", or "Step 1". If ${lessonTarget} is not literally a circuit, still use gate-style AND/OR branching nodes to model its real decision/control logic, using genuine terms from the topic at every node. Connect nodes with arrows that reflect the actual signal or logic flow. Do not wrap it in markdown code blocks.`;
+        } else {
+          finalUserPrompt = `Output ONLY raw, clean Mermaid JS diagram code ("graph TD") for a concept flowchart of "${lessonTarget}". Every single node label must be a real, specific concept, step, term, or example from ${lessonTarget} — never generic placeholders like "Step 1", "Process", or "Concept A". Use decision diamonds {"..."} for genuine conditional/branching logic in the topic, and plain boxes for sequential steps or components. Edges must reflect real causal or sequential relationships, not a generic funnel shape. Do not wrap it in markdown code blocks.`;
+        }
       } else if (activeTab === "plan") {
         finalUserPrompt = `Create a 6-step study roadmap for ${lessonTarget}. Format precisely using: ### Step Title | Actionable Description | Time Allotment ###`;
       } else if (activeTab === "quiz") {
-        finalUserPrompt = quizFormat === 'mcq' 
-          ? `Generate exactly 10 ${quizDifficulty || "basic"} multiple choice questions covering ${lessonTarget} based on the reference material provided in the system context. Include a meaningful Area field for diagnostics.`
-          : `Generate 5 rapid fire conceptual short-answer questions covering ${lessonTarget} based on the reference material provided in the system context.`;
+        const focusClause = focusArea
+          ? ` The student previously scored weakest on the area "${focusArea}" — weight at least 60% of the questions to specifically probe and reinforce that area, while the rest still cover ${lessonTarget} broadly so it isn't a one-note quiz.`
+          : "";
+        finalUserPrompt = quizFormat === 'mcq'
+          ? `Generate exactly 10 ${quizDifficulty || "basic"} multiple choice questions covering ${lessonTarget} based on the reference material provided in the system context. Every question must test a genuinely different sub-concept — do not paraphrase the same fact twice. Distractor options (wrong answers) must be plausible, specific, and topic-relevant, never obviously silly filler. Use a short, consistent, reusable Area label per question (2-4 words, e.g. "Recursion Base Cases") so related questions share the same Area string.${focusClause}`
+          : `Generate 5 rapid fire conceptual short-answer questions covering ${lessonTarget} based on the reference material provided in the system context. Each question must test a distinct sub-concept, not rephrasings of the same idea.${focusClause}`;
       } else if (learnFormat === 'reel') {
-        finalUserPrompt = `Write a short vertical reel lesson dialogue about ${lessonTarget}. Use exactly 10-14 short lines alternating A and B. Format every line as "A: dialogue" or "B: dialogue". The conversation should ask questions and answer them, with mood=${mood}, time=${timeAvailable} minutes, learner goal=${goal}. IMPORTANT: no character names, no stage directions, no sound effects, no markdown headings, no narration. Use the reference material as the primary source.`;
+        finalUserPrompt = `Write a punchy short-form vertical video script (like a TikTok/Reels explainer) about "${lessonTarget}", as a back-and-forth between two voices A and B. Exactly 10-14 lines, strictly alternating A/B/A/B, following these hard rules: (1) Line 1 (A) MUST be a scroll-stopping hook — a surprising fact, bold claim, or provocative question specific to ${lessonTarget} — never a greeting or a generic "let's talk about" intro. (2) Every line is ONE short, spoken-style sentence, under 15 words — no textbook phrasing, no filler, no restating the question back before answering. (3) B reacts like a real curious person (surprise, disbelief, "wait, really?") before landing the answer, not just flat quiz-style Q&A. (4) Include at least one concrete, specific example, number, or comparison drawn from ${lessonTarget} — never a generic placeholder fact. (5) The final line must land a clear, memorable takeaway or punchline, not trail off vaguely. Match mood=${mood}, learner goal=${goal}. Format every line as "A: dialogue" or "B: dialogue" only — no character names, no stage directions, no sound effects, no markdown, no narration. Use the reference material as the primary source of facts.`;
       } else if (learnFormat === 'podcast') {
         finalUserPrompt = `Write an ultra-engaging educational podcast dialogue script between A and B deep diving into ${lessonTarget}. Match mood=${mood}, time=${timeAvailable} minutes, learner goal=${goal}. Use questions and answers naturally. No markdown headings. Use the reference material as the primary source.`;
       } else if (learnFormat === 'flashcards') {

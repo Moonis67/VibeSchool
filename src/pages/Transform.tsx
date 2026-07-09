@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { generateContent, generateFollowUp, SUGGESTED_TOPICS } from "@/lib/aiEngine";
 import { useVibe } from "@/lib/vibeStore";
-import { openSession, listLibrary, toggleSessionSource, createSession, type LibraryFile } from "@/lib/sessionsApi";
+import { openSession, listLibrary, toggleSessionSource, createSession, renameSession, type LibraryFile } from "@/lib/sessionsApi";
 import brainrotVideoLinks from "../../brainrot.md?raw";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -34,7 +34,18 @@ import {
   Image as ImageIcon, GraduationCap, Layers, Cpu, Lock, Unlock
 } from "lucide-react";
 
-mermaid.initialize({ startOnLoad: true, theme: 'default', securityLevel: 'strict' });
+// htmlLabels: false forces node/edge labels to render as plain SVG <text>
+// elements instead of <foreignObject><div>...</div></foreignObject>. That
+// matters because sanitizeSvg (below) strips every <foreignObject> to keep
+// the AI-generated diagram markup from smuggling in raw HTML/script — with
+// htmlLabels on, that stripping was silently deleting all the label text.
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'default',
+  securityLevel: 'strict',
+  flowchart: { htmlLabels: false },
+  class: { htmlLabels: false },
+});
 
 const cleanMathArtifacts = (text: string) => {
   return text.replace(/\\\(|\\\)|\\\[|\\\]/g, '').replace(/###/g, '##');
@@ -538,6 +549,52 @@ const downloadCheatSheetCanvas = (aid: VisualAidImage, index: number, filename: 
   link.remove();
 };
 
+// The poster body is authored at a fixed 1200px design width (it doubles as
+// the layout reference for the canvas PNG export above), so it doesn't
+// naturally fit a narrower card — it used to just overflow with a horizontal
+// scrollbar. This scales it down (via CSS transform, never up) to whatever
+// width the container actually has, and shrinks the wrapper to match so
+// there's no leftover scroll in either direction.
+const ScaledPosterFrame = ({ children }: { children: React.ReactNode }) => {
+  // measureRef must carry no padding of its own — it exists purely so
+  // clientWidth reflects the space actually available for the scaled
+  // poster. Measuring the p-3 wrapper directly instead double-counted its
+  // own horizontal padding into the target width, pushing the poster past
+  // the right edge by that same amount.
+  const measureRef = useRef<HTMLDivElement>(null);
+  const posterRef = useRef<HTMLDivElement>(null);
+  const [frame, setFrame] = useState({ scale: 1, width: 1200, height: 675 });
+
+  useEffect(() => {
+    const recompute = () => {
+      const measure = measureRef.current;
+      const poster = posterRef.current;
+      if (!measure || !poster) return;
+      const naturalWidth = poster.scrollWidth || 1200;
+      const naturalHeight = poster.scrollHeight || 675;
+      const scale = Math.min(1, measure.clientWidth / naturalWidth);
+      setFrame({ scale, width: naturalWidth * scale, height: naturalHeight * scale });
+    };
+    recompute();
+    const observer = new ResizeObserver(recompute);
+    if (measureRef.current) observer.observe(measureRef.current);
+    if (posterRef.current) observer.observe(posterRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div className="bg-slate-100 p-3">
+      <div ref={measureRef} className="w-full">
+        <div className="mx-auto overflow-hidden" style={{ width: frame.width, height: frame.height }}>
+          <div ref={posterRef} className="origin-top-left" style={{ width: 1200, transform: `scale(${frame.scale})` }}>
+            {children}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const CheatSheetPoster = ({ aid, index }: { aid: VisualAidImage; index: number }) => {
   const accent = accentClasses[aid.accent || "indigo"] || accentClasses.indigo;
   const filename = `${aid.title || `cheat-sheet-${index + 1}`}`.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || `cheat-sheet-${index + 1}`;
@@ -555,9 +612,9 @@ const CheatSheetPoster = ({ aid, index }: { aid: VisualAidImage; index: number }
         </Button>
       </div>
 
-      <div className="overflow-x-auto bg-slate-100 p-3">
+      <ScaledPosterFrame>
         <div
-          className="mx-auto min-h-[675px] w-[1200px] bg-white p-10 text-slate-950 shadow-sm"
+          className="min-h-[675px] w-[1200px] bg-white p-10 text-slate-950 shadow-sm"
           style={{ fontFamily: "Plus Jakarta Sans, Inter, Arial, sans-serif" }}
         >
           <div className={`rounded-[2rem] border-2 ${accent.border} ${accent.soft} p-8 ring-8 ${accent.ring}`}>
@@ -608,7 +665,54 @@ const CheatSheetPoster = ({ aid, index }: { aid: VisualAidImage; index: number }
             </div>
           </div>
         </div>
+      </ScaledPosterFrame>
+    </Card>
+  );
+};
+
+const RawImageAid = ({ aid, index }: { aid: VisualAidImage; index: number }) => {
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const mimeType = aid.mimeType || "image/png";
+  const imageUrl = `data:${mimeType};base64,${aid.imageData}`;
+  const filename = `${aid.title || `visual-aid-${index + 1}`}`.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || `visual-aid-${index + 1}`;
+  const altText = aid.title || `Visual aid ${index + 1}`;
+
+  return (
+    <Card className="overflow-hidden border-2 bg-white shadow-xl">
+      <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h4 className="text-lg font-black">{altText}</h4>
+          <p className="text-xs font-semibold text-muted-foreground">
+            {aid.subtitle || aid.lectures?.join(", ") || "Revision snapshot"}
+          </p>
+        </div>
+        <Button asChild variant="secondary" size="sm" className="gap-2">
+          <a href={imageUrl} download={`${filename}.${mimeType.includes("jpeg") ? "jpg" : "png"}`}>
+            <Download className="h-4 w-4" /> Download
+          </a>
+        </Button>
       </div>
+      <div className="bg-slate-100 p-3">
+        <button
+          type="button"
+          onClick={() => setIsPreviewOpen(true)}
+          className="mx-auto block w-full cursor-zoom-in overflow-hidden rounded-xl border bg-white shadow-sm transition-opacity hover:opacity-90"
+          aria-label={`Expand ${altText}`}
+        >
+          <img
+            src={imageUrl}
+            alt={altText}
+            className="mx-auto max-h-[420px] w-full object-contain"
+          />
+        </button>
+      </div>
+
+      <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <DialogContent className="max-w-5xl w-[95vw] border-none bg-black/95 p-4">
+          <DialogTitle className="sr-only">{altText}</DialogTitle>
+          <img src={imageUrl} alt={altText} className="max-h-[85vh] w-full rounded-lg object-contain" />
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 };
@@ -637,34 +741,7 @@ const VisualAidsBlock = ({ aids }: { aids: VisualAidImage[] }) => {
             return <CheatSheetPoster key={`${aid.title}-${index}`} aid={aid} index={index} />;
           }
 
-          const mimeType = aid.mimeType || "image/png";
-          const imageUrl = `data:${mimeType};base64,${aid.imageData}`;
-          const filename = `${aid.title || `visual-aid-${index + 1}`}`.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || `visual-aid-${index + 1}`;
-
-          return (
-            <Card key={`${aid.title}-${index}`} className="overflow-hidden border-2 bg-white shadow-xl">
-              <div className="flex flex-col gap-3 border-b bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h4 className="text-lg font-black">{aid.title || `Visual Aid ${index + 1}`}</h4>
-                  <p className="text-xs font-semibold text-muted-foreground">
-                    {aid.subtitle || aid.lectures?.join(", ") || "Revision snapshot"}
-                  </p>
-                </div>
-                <Button asChild variant="secondary" size="sm" className="gap-2">
-                  <a href={imageUrl} download={`${filename}.${mimeType.includes("jpeg") ? "jpg" : "png"}`}>
-                    <Download className="h-4 w-4" /> Download
-                  </a>
-                </Button>
-              </div>
-              <div className="bg-slate-100 p-3">
-                <img
-                  src={imageUrl}
-                  alt={aid.title || `Visual aid ${index + 1}`}
-                  className="mx-auto w-full rounded-xl border bg-white object-contain shadow-sm"
-                />
-              </div>
-            </Card>
-          );
+          return <RawImageAid key={`${aid.title}-${index}`} aid={aid} index={index} />;
         })}
       </div>
     </div>
@@ -680,11 +757,24 @@ const inferQuestionArea = (question: string) => {
     return "Core Concepts";
 };
 
-const QuizBlock = ({ rawData, onRetry }: { rawData: string, onRetry: () => void }) => {
+type QuizCompletionResult = {
+  score: number;
+  total: number;
+  strongestArea: string | null;
+  weakestArea: string | null;
+};
+
+const QuizBlock = ({ rawData, onRetry, onDiveDeeper, onComplete }: {
+  rawData: string;
+  onRetry: () => void;
+  onDiveDeeper?: (area: string) => void;
+  onComplete?: (result: QuizCompletionResult) => void;
+}) => {
     const [questions, setQuestions] = useState<QuizQuestion[]>([]);
     const [selectedAnswers, setSelectedAnswers] = useState<Record<number, string>>({});
     const [showResults, setShowResults] = useState(false);
     const [score, setScore] = useState(0);
+    const hasReportedCompletion = useRef(false);
 
     useEffect(() => {
         if (!rawData) return;
@@ -705,6 +795,10 @@ const QuizBlock = ({ rawData, onRetry }: { rawData: string, onRetry: () => void 
             };
         }).filter((question): question is QuizQuestion => Boolean(question));
         setQuestions(parsed);
+        setSelectedAnswers({});
+        setShowResults(false);
+        setScore(0);
+        hasReportedCompletion.current = false;
     }, [rawData]);
 
     const handleSelect = (qIdx: number, optId: string) => {
@@ -724,7 +818,9 @@ const QuizBlock = ({ rawData, onRetry }: { rawData: string, onRetry: () => void 
         toast.success(`Score: ${correctCount}/${questions.length}`);
     };
 
-    if (questions.length === 0) return null;
+    // Computed unconditionally (safe on an empty questions array) so the
+    // hooks below always run in the same order regardless of parse state —
+    // the empty-state bailout happens after every hook has been declared.
     const areaStats = questions.reduce((acc: Record<string, { correct: number; total: number }>, q, idx) => {
         const area = q.area || "Core Concepts";
         if (!acc[area]) acc[area] = { correct: 0, total: 0 };
@@ -737,6 +833,24 @@ const QuizBlock = ({ rawData, onRetry }: { rawData: string, onRetry: () => void 
       .sort((a, b) => b.pct - a.pct);
     const strongest = rankedAreas[0];
     const weakest = [...rankedAreas].sort((a, b) => a.pct - b.pct)[0];
+
+    // Report the real, per-area result exactly once per completed attempt —
+    // this is the only place accurate diagnostic data actually exists (the
+    // generic post-generation history log used to write a hardcoded guess
+    // before the user had even answered a single question).
+    useEffect(() => {
+      if (!showResults || hasReportedCompletion.current) return;
+      hasReportedCompletion.current = true;
+      onComplete?.({
+        score,
+        total: questions.length,
+        strongestArea: strongest?.area ?? null,
+        weakestArea: weakest?.area ?? null,
+      });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [showResults]);
+
+    if (questions.length === 0) return null;
 
     return (
         <div className="space-y-8 max-w-4xl mx-auto">
@@ -791,7 +905,18 @@ const QuizBlock = ({ rawData, onRetry }: { rawData: string, onRetry: () => void 
                             <p className="text-sm text-amber-700">{weakest ? `${weakest.correct}/${weakest.total} correct` : "Answer the quiz to unlock this."}</p>
                           </div>
                         </div>
-                        <Button size="lg" variant="secondary" onClick={onRetry} className="h-12 px-8 mx-auto flex"><RefreshCw className="w-4 h-4 mr-2" /> Attempt 10 More</Button>
+                        <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                          <Button size="lg" variant="secondary" onClick={onRetry} className="h-12 px-8"><RefreshCw className="w-4 h-4 mr-2" /> Attempt 10 More</Button>
+                          {onDiveDeeper && weakest && (
+                            <Button
+                              size="lg"
+                              onClick={() => onDiveDeeper(weakest.area)}
+                              className="h-12 px-8 bg-amber-600 hover:bg-amber-700 text-white"
+                            >
+                              <Lightbulb className="w-4 h-4 mr-2" /> Dive Deeper: {weakest.area}
+                            </Button>
+                          )}
+                        </div>
                     </div>
                 )}
             </div>
@@ -958,6 +1083,13 @@ const isDocumentInstruction = (value: string) => {
   return /^(explain|explain me|explain this|explain me this|summari[sz]e|summari[sz]e this|what is this|teach me this|break this down|tell me about this|this)$/i.test(value.trim());
 };
 
+const deriveTitleFromTopic = (topic: string) => {
+  const cleaned = topic.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "New Session";
+  const truncated = cleaned.length > 60 ? `${cleaned.slice(0, 57)}...` : cleaned;
+  return truncated.charAt(0).toUpperCase() + truncated.slice(1);
+};
+
 const documentFocusedSuggestions = (fileName?: string | null) => {
   const base = fileName?.replace(/\.[^.]+$/, "").trim() || "this document";
   return [
@@ -1013,13 +1145,14 @@ const MAX_UPLOAD_FILES = 10;
 
 const COMPRESSION_THRESHOLD_BYTES = 3 * 1024 * 1024;
 
-const FALLBACK_REEL_PATHS = [
-  "/reels/reel-1.mp4",
-  "/reels/reel-2.mp4",
-  "/reels/reel-3.mp4",
-];
+// These files never actually shipped in public/reels — referencing them
+// meant the "no background video available" case tried three guaranteed
+// 404s before giving up. brainrot.md is the real video source and reliably
+// has entries; an empty list here just goes straight to the gradient
+// placeholder background instead of masking with dead local paths.
+const FALLBACK_REEL_PATHS: string[] = [];
 
-type TtsProvider = "deepgram" | "browser";
+type TtsProvider = "server" | "browser";
 
 type ProfilePreset = {
   id: string;
@@ -1172,21 +1305,34 @@ const TOOL_HERO_COPY: Record<string, string> = {
   plan: "A day-by-day roadmap that breaks a big topic into a plan you can follow.",
 };
 
-const DEEPGRAM_AURA_VOICES: TtsVoiceOption[] = [
-  { id: "aura-2-thalia-en", label: "Thalia", description: "Confident reel host" },
-  { id: "aura-2-aurora-en", label: "Aurora", description: "Cheerful and punchy" },
-  { id: "aura-2-atlas-en", label: "Atlas", description: "Friendly creator energy" },
-  { id: "aura-2-selene-en", label: "Selene", description: "Expressive storyteller" },
-  { id: "aura-2-ophelia-en", label: "Ophelia", description: "Bright and enthusiastic" },
-  { id: "aura-2-aries-en", label: "Aries", description: "Warm energetic narrator" },
-  { id: "aura-2-apollo-en", label: "Apollo", description: "Casual confident male" },
-  { id: "aura-2-zeus-en", label: "Zeus", description: "Deep cinematic male" },
+// Real Microsoft Edge neural voice ids, synthesized server-side by
+// workers/tts-server.mjs (Railway) via the Supabase edge-tts proxy — must
+// match ALLOWED_VOICES in that worker and allowedVoices in
+// supabase/functions/edge-tts/index.ts. The free, unofficial Edge "Read
+// Aloud" API these come from doesn't support Azure's paid emotional
+// "styles" (cheerful/excited/etc.) — only voice choice + speaking rate.
+const EDGE_TTS_VOICES: TtsVoiceOption[] = [
+  { id: "en-US-AndrewNeural", label: "Andrew", description: "Warm, confident — most natural-sounding pick" },
+  { id: "en-US-AriaNeural", label: "Aria", description: "Positive, confident" },
+  { id: "en-US-JennyNeural", label: "Jenny", description: "Friendly assistant" },
+  { id: "en-US-GuyNeural", label: "Guy", description: "Newscast energy" },
+  { id: "en-US-DavisNeural", label: "Davis", description: "Casual conversation" },
+  { id: "en-US-EmmaNeural", label: "Emma", description: "Cheerful" },
+  { id: "en-US-ChristopherNeural", label: "Christopher", description: "Reliable, authoritative" },
+  { id: "en-US-MichelleNeural", label: "Michelle", description: "Pleasant" },
 ];
 
-const DEEPGRAM_TTS_MIN_TIMEOUT_MS = 25000;
-const DEEPGRAM_TTS_MAX_TIMEOUT_MS = 90000;
-const getDeepgramTtsTimeoutMs = (text: string) =>
-  Math.min(DEEPGRAM_TTS_MAX_TIMEOUT_MS, Math.max(DEEPGRAM_TTS_MIN_TIMEOUT_MS, 12000 + text.length * 8));
+// Reels always speak in this one voice — Andrew is widely regarded in the
+// edge-tts community as the most natural/lively-sounding English voice
+// available through this free API. No per-user voice picker for reels: one
+// strong default beats a menu of eight untested options. Podcast keeps its
+// own separate voice selector (EDGE_TTS_VOICES above) unaffected by this.
+const REEL_VOICE_ID = "en-US-AndrewNeural";
+
+const EDGE_TTS_MIN_TIMEOUT_MS = 25000;
+const EDGE_TTS_MAX_TIMEOUT_MS = 90000;
+const getEdgeTtsTimeoutMs = (text: string) =>
+  Math.min(EDGE_TTS_MAX_TIMEOUT_MS, Math.max(EDGE_TTS_MIN_TIMEOUT_MS, 12000 + text.length * 8));
 
 const extractVideoUrls = (raw: string) => {
   const matches = raw.match(/https?:\/\/[^\s)\]'"<>]+/gi) || [];
@@ -1389,6 +1535,10 @@ const Transform = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [storageUsage, setStorageUsage] = useState<{ usedBytes: number; capBytes: number } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  const [isEditingSessionTitle, setIsEditingSessionTitle] = useState(false);
+  const [sessionTitleDraft, setSessionTitleDraft] = useState("");
+  const hasAutoNamedSession = useRef(false);
   const [libraryFiles, setLibraryFiles] = useState<LibraryFile[]>([]);
   const [isLibraryPickerOpen, setIsLibraryPickerOpen] = useState(false);
   const [isLibraryLoading, setIsLibraryLoading] = useState(false);
@@ -1452,9 +1602,10 @@ const Transform = () => {
   const [currentReelVideo, setCurrentReelVideo] = useState(0);
   const [reelUrlsText, setReelUrlsText] = useState("");
   const [ttsProvider, setTtsProvider] = useState<TtsProvider>("browser");
-  const [preferredTtsProvider, setPreferredTtsProvider] = useState<TtsProvider>("deepgram");
-  const [selectedTtsVoice, setSelectedTtsVoice] = useState("aura-2-thalia-en");
+  const [preferredTtsProvider, setPreferredTtsProvider] = useState<TtsProvider>("server");
+  const [selectedTtsVoice, setSelectedTtsVoice] = useState("en-US-JennyNeural");
   const reelSpeechRunRef = useRef(0);
+  const reelVideoFailCountRef = useRef(0);
   const reelAudioRef = useRef<HTMLAudioElement | null>(null);
   const reelTimerRef = useRef<number | null>(null);
   const reelStageRef = useRef<HTMLDivElement | null>(null);
@@ -1470,11 +1621,11 @@ const Transform = () => {
     const merged = Array.from(new Set([...manualReelUrls, ...brainrotUrls]));
     return merged.length ? merged : FALLBACK_REEL_PATHS;
   }, [manualReelUrls, brainrotUrls]);
-  const customDeepgramTtsEndpoint =
-    import.meta.env.VITE_DEEPGRAM_TTS_ENDPOINT || import.meta.env.VITE_TTS_ENDPOINT || "";
-  const deepgramTtsEndpoint =
-    customDeepgramTtsEndpoint || (import.meta.env.VITE_SUPABASE_URL ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/deepgram-tts` : "");
-  const hasDeepgramEndpoint = Boolean(deepgramTtsEndpoint);
+  const customEdgeTtsEndpoint =
+    import.meta.env.VITE_EDGE_TTS_ENDPOINT || import.meta.env.VITE_TTS_ENDPOINT || "";
+  const edgeTtsEndpoint =
+    customEdgeTtsEndpoint || (import.meta.env.VITE_SUPABASE_URL ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/edge-tts` : "");
+  const hasEdgeTtsEndpoint = Boolean(edgeTtsEndpoint);
   const activeGoalLabel = GOAL_OPTIONS.find((item) => item.id === goal)?.label || goal;
   const activeExperienceLabel = EXPERIENCE_OPTIONS.find((item) => item.id === experienceLevel)?.label || experienceLevel;
   const activeStyleLabel = LEARNING_STYLE_OPTIONS.find((item) => item.id === learningStyle)?.label || learningStyle;
@@ -1620,11 +1771,11 @@ const Transform = () => {
     const sentences = cleanText.match(/[^.!?]+[.!?]+/g) || [cleanText];
     if (preferEdge && startFromChar === 0) {
       try {
-        const usedDeepgram = await playDeepgramAudio(cleanText, () => syncEstimatedTextCaptions(cleanText, performance.now()));
-        if (usedDeepgram) return;
+        const usedServerVoice = await playServerTtsAudio(cleanText, () => syncEstimatedTextCaptions(cleanText, performance.now()));
+        if (usedServerVoice) return;
       } catch {
-        console.warn("Deepgram Aura TTS failed, falling back to browser speech.");
-        toast.info("Deepgram Aura is unavailable, using browser voice.");
+        console.warn("Edge TTS failed, falling back to browser speech.");
+        toast.info("Server voice is unavailable, using browser voice.");
       }
     }
     window.speechSynthesis.resume();
@@ -1740,12 +1891,6 @@ const Transform = () => {
     }
   };
 
-  const handleReelProviderChange = (provider: TtsProvider) => {
-    if (isSpeaking) handleStop();
-    setPreferredTtsProvider(provider);
-    setTtsProvider(provider);
-  };
-
   const toggleReelFullscreen = async () => {
     if (!reelStageRef.current) return;
     try {
@@ -1823,16 +1968,24 @@ const Transform = () => {
     }, 120);
   };
 
-  const playDeepgramAudio = async (
+  const playServerTtsAudio = async (
     text: string,
     sync?: () => void,
     options?: {
       isCurrent?: () => boolean;
       onPlaybackStart?: () => void;
       onPlaybackEnd?: () => void;
+      // Reels force the server engine + a fixed voice regardless of whatever
+      // the podcast player's provider/voice pickers are currently set to —
+      // those are separate, unrelated UI state that used to leak into reel
+      // playback (e.g. a user switching podcast to "browser" would silently
+      // break reel's server-voice playback too, since both read the same
+      // preferredTtsProvider/selectedTtsVoice state).
+      forceServerVoice?: boolean;
+      voiceOverride?: string;
     },
   ) => {
-    if (preferredTtsProvider !== "deepgram") return false;
+    if (!options?.forceServerVoice && preferredTtsProvider !== "server") return false;
 
     const cleanText = sanitizeSpeechText(text);
     if (!cleanText) return false;
@@ -1841,13 +1994,13 @@ const Transform = () => {
     let revokeAudioUrl = false;
     setIsTtsLoading(true);
 
-    if (hasDeepgramEndpoint) {
+    if (hasEdgeTtsEndpoint) {
       const ttsAbortController = new AbortController();
-      const ttsRequestTimer = window.setTimeout(() => ttsAbortController.abort(), getDeepgramTtsTimeoutMs(cleanText));
+      const ttsRequestTimer = window.setTimeout(() => ttsAbortController.abort(), getEdgeTtsTimeoutMs(cleanText));
       try {
         const { data: { session } } = await supabase.auth.getSession();
         const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || "";
-        const response = await fetch(deepgramTtsEndpoint, {
+        const response = await fetch(edgeTtsEndpoint, {
           method: "POST",
           signal: ttsAbortController.signal,
           headers: {
@@ -1857,7 +2010,7 @@ const Transform = () => {
           },
           body: JSON.stringify({
             text: cleanText,
-            voice: selectedTtsVoice,
+            voice: options?.voiceOverride || selectedTtsVoice,
             speed: getPlaybackSpeed(),
             format: "mp3",
           }),
@@ -1865,7 +2018,7 @@ const Transform = () => {
 
         if (!response.ok) {
           const detail = await response.text().catch(() => "");
-          throw new Error(`Deepgram TTS endpoint returned ${response.status}${detail ? `: ${detail.slice(0, 160)}` : ""}.`);
+          throw new Error(`Edge TTS endpoint returned ${response.status}${detail ? `: ${detail.slice(0, 160)}` : ""}.`);
         }
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("application/json")) {
@@ -1875,7 +2028,7 @@ const Transform = () => {
           } else if (data.audioBase64 || data.audio) {
             audioUrl = `data:${data.mimeType || "audio/mpeg"};base64,${data.audioBase64 || data.audio}`;
           } else {
-            throw new Error("Deepgram TTS JSON response did not include audioUrl or audioBase64.");
+            throw new Error("Edge TTS JSON response did not include audioUrl or audioBase64.");
           }
         } else {
           const blob = await response.blob();
@@ -1883,7 +2036,7 @@ const Transform = () => {
           revokeAudioUrl = true;
         }
       } catch (error) {
-        console.warn("Deepgram TTS endpoint failed; trying browser speech fallback.", error);
+        console.warn("Edge TTS endpoint failed; trying browser speech fallback.", error);
         if (error instanceof Error) toast.error(error.message);
       } finally {
         window.clearTimeout(ttsRequestTimer);
@@ -1892,7 +2045,7 @@ const Transform = () => {
 
     if (!audioUrl) {
       setIsTtsLoading(false);
-      throw new Error("Deepgram TTS did not return audio.");
+      throw new Error("Edge TTS did not return audio.");
     }
 
     if (options?.isCurrent && !options.isCurrent()) {
@@ -1919,7 +2072,7 @@ const Transform = () => {
       setIsTtsLoading(false);
       setIsSpeaking(false);
       setIsPaused(false);
-      toast.error("Deepgram Aura audio could not play.");
+      toast.error("Edge TTS audio could not play.");
     };
     try {
       await audio.play();
@@ -1939,23 +2092,25 @@ const Transform = () => {
 
     options?.onPlaybackStart?.();
     sync?.();
-    setTtsProvider("deepgram");
+    setTtsProvider("server");
     setIsTtsLoading(false);
     setIsSpeaking(true);
     setIsPaused(false);
     return true;
   };
 
-  const tryPlayDeepgramReel = async (payload: ReelPayload) => {
+  const tryPlayServerReel = async (payload: ReelPayload) => {
     const text = payload.segments.map((segment) => sanitizeSpeechText(segment.text)).join("\n");
     const runId = reelSpeechRunRef.current;
-    return playDeepgramAudio(
+    return playServerTtsAudio(
       text,
       () => syncEstimatedCaptions(payload.segments, performance.now()),
       {
         isCurrent: () => reelSpeechRunRef.current === runId,
         onPlaybackStart: startReelVideo,
         onPlaybackEnd: resetReelVideo,
+        forceServerVoice: true,
+        voiceOverride: REEL_VOICE_ID,
       },
     );
   };
@@ -2084,11 +2239,11 @@ const Transform = () => {
     setVideoHadError(false);
 
     try {
-      const usedDeepgram = await tryPlayDeepgramReel(payload);
-      if (!usedDeepgram) await playBrowserReelSpeech(payload);
+      const usedServerVoice = await tryPlayServerReel(payload);
+      if (!usedServerVoice) await playBrowserReelSpeech(payload);
     } catch {
-      console.warn("Deepgram Aura TTS failed, falling back to browser speech.");
-      toast.info("Using browser voice because Deepgram Aura is unavailable.");
+      console.warn("Edge TTS failed, falling back to browser speech.");
+      toast.info("Using browser voice because the server voice is unavailable.");
       await playBrowserReelSpeech(payload);
     }
   };
@@ -2195,10 +2350,15 @@ const Transform = () => {
   // come back. A brand-new session simply has none yet.
   useEffect(() => {
     if (!sessionId) return;
+    hasAutoNamedSession.current = false;
     let cancelled = false;
     openSession(sessionId)
-      .then((sources) => {
+      .then(({ session, sources }) => {
         if (cancelled) return;
+        setSessionTitle(session.title);
+        // A session already carrying a real title (renamed by the user, or
+        // auto-named on an earlier visit) should never be auto-renamed again.
+        if (session.title && session.title !== "New Session") hasAutoNamedSession.current = true;
         const activeDocs = sources
           .filter((row) => row.is_active && row.documents)
           .map((row) => ({
@@ -2287,6 +2447,8 @@ const Transform = () => {
         const created = await createSession(userTopic || "New Session");
         activeSessionId = created.id;
         setSessionId(created.id);
+        setSessionTitle(created.title);
+        hasAutoNamedSession.current = Boolean(userTopic);
         navigate(`/transform?mode=learn&session=${created.id}`, { replace: true });
       }
       const files = await listLibrary(activeSessionId);
@@ -2488,7 +2650,7 @@ const Transform = () => {
       let enqueueData: { error?: string } | null = null;
       try {
         const enqueueResult = await supabase.functions.invoke<{ error?: string }>("enqueue-document-processing", {
-          body: { document_id: documentId },
+          body: { document_id: documentId, file_name: selectedFile.name, file_size: selectedFile.size },
           headers: { Authorization: `Bearer ${accessToken}` }
         });
         enqueueData = enqueueResult.data;
@@ -2642,12 +2804,23 @@ const Transform = () => {
     setContentStream((prev) => [...prev, artifact.block]);
   };
 
+  // Every tool should only ever show what it was asked to generate — not a
+  // diagram or roadmap left over from whatever tool ran before it. Called
+  // from every place that switches the active tool (studio picker, chat "@"
+  // commands), so no entry point can skip it and leave stale state showing.
+  const resetForToolSwitch = (tab: string) => {
+    setToolSessionStart(contentStream.length);
+    if (tab !== "visualize") setDiagramCode("");
+    if (tab !== "plan") setRoadmapData([]);
+  };
+
   const applyStudioTool = (tool: StudioToolConfig) => {
     setActiveTab(tool.tab);
     if (tool.learnFormat) setLearnFormat(tool.learnFormat);
     if (tool.quizFormat) setQuizFormat(tool.quizFormat);
     if (tool.vizFormat) setVizFormat(tool.vizFormat);
     setIsToolWorkspaceOpen(true);
+    resetForToolSwitch(tool.tab);
     openStudioFocusPicker(tool.label, true);
   };
 
@@ -2668,7 +2841,6 @@ const Transform = () => {
   const selectStudioTool = (tool: StudioToolConfig) => {
     applyStudioTool(tool);
     const latest = getToolArtifact(tool);
-    setToolSessionStart(contentStream.length);
     if (latest) {
       setHeroTool(null);
       setIsFocusPickerOpen(false);
@@ -2765,7 +2937,38 @@ const Transform = () => {
     clearHeroIfActive();
   };
 
-  const handleGenerate = async (topicOverride?: string) => {
+  // Gives a brand-new session a real name the first time a topic is actually
+  // discussed in it, instead of leaving it "New Session" forever. Only fires
+  // once per session (guarded by hasAutoNamedSession) — a session the user
+  // has already renamed (manually or via a prior auto-name) is left alone.
+  const maybeAutoNameSession = (topic: string) => {
+    if (!sessionId || hasAutoNamedSession.current) return;
+    const cleaned = topic.trim();
+    if (!cleaned) return;
+    hasAutoNamedSession.current = true;
+    const title = deriveTitleFromTopic(cleaned);
+    setSessionTitle(title);
+    renameSession(sessionId, title).catch(() => {
+      hasAutoNamedSession.current = false;
+    });
+  };
+
+  const handleSaveSessionTitle = async () => {
+    const title = sessionTitleDraft.trim();
+    if (!sessionId || !title) { setIsEditingSessionTitle(false); return; }
+    const previousTitle = sessionTitle;
+    setSessionTitle(title);
+    setIsEditingSessionTitle(false);
+    hasAutoNamedSession.current = true;
+    try {
+      await renameSession(sessionId, title);
+    } catch {
+      setSessionTitle(previousTitle);
+      toast.error("Could not rename the session. Please try again.");
+    }
+  };
+
+  const handleGenerate = async (topicOverride?: string, focusArea?: string) => {
     const topic = topicOverride || userTopic;
     if (!topic.trim() && !materialId) { toast.error("Enter a topic or upload a PDF reference!"); return; }
     // Guard: prevent duplicate concurrent calls
@@ -2834,6 +3037,7 @@ const Transform = () => {
         setIsEditingProfile(false);
         toast.success(`Created ${data.aids.length} visual revision sheet${data.aids.length === 1 ? "" : "s"}.`);
         setHeroTool(null);
+        maybeAutoNameSession(topic);
         return;
       }
       
@@ -2858,6 +3062,7 @@ const Transform = () => {
           quizFormat,
           learnFormat,
           vizFormat,
+          focus_area: focusArea || undefined,
           session_context: getTemporaryMemory()
         },
         headers: { Authorization: `Bearer ${session?.access_token}` }
@@ -2880,13 +3085,17 @@ const Transform = () => {
         materialId ? documentFocusedSuggestions(primaryDocumentLabel) : data.suggestions,
         materialId && isDocumentInstruction(topic) ? primaryDocumentLabel || "uploaded document" : topic
       );
+      maybeAutoNameSession(topic);
 
-      // Log session history
+      // Log session history. For quiz mode, weak_areas/suggestions are left
+      // for handleQuizComplete to fill in once the user actually answers —
+      // this insert used to claim a hardcoded, made-up weak area before a
+      // single question had even been shown, which was never real data.
       if (session?.user) {
          await supabase.from('user_session_history').insert({
             user_id: session.user.id,
             last_topic: topic,
-            weak_areas: activeTab === 'quiz' ? ['Review Conceptual Edge Scenarios'] : ['General Recall Bounds'],
+            weak_areas: activeTab === 'quiz' ? [] : ['General Recall Bounds'],
             suggestions: materialId ? documentFocusedSuggestions(primaryDocumentLabel) : [`Re-run customized logic checks parameters inside ${topic}`]
          }).catch(() => {});
       }
@@ -2932,6 +3141,23 @@ const Transform = () => {
     finally { clearInterval(interval); setIsGenerating(false); isGeneratingRef.current = false; currentGenerationRequestRef.current = null; setGenerationStartedAt(null); }
   };
 
+  // The only place a quiz attempt's real per-area result is known. Persists
+  // it (instead of the earlier hardcoded guess) and offers to regenerate a
+  // follow-up quiz weighted toward whatever area the student scored weakest
+  // on, via handleGenerate's focusArea param.
+  const handleQuizComplete = (result: { score: number; total: number; strongestArea: string | null; weakestArea: string | null }) => {
+    void (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
+      await supabase.from('user_session_history').insert({
+        user_id: session.user.id,
+        last_topic: userTopic,
+        weak_areas: result.weakestArea ? [result.weakestArea] : [],
+        suggestions: result.weakestArea ? [`Dive deeper into ${result.weakestArea}`] : [],
+      }).catch(() => {});
+    })();
+  };
+
   const handleBottomTriggerNewTopic = () => {
      if (!bottomNewTopic.trim()) { toast.error("Please enter a new topic topic state parameters."); return; }
      setUserTopic(bottomNewTopic);
@@ -2949,6 +3175,15 @@ const Transform = () => {
         toast.error("Could not parse dialogue from the script. Try regenerating.");
         return;
       }
+      // Every new reel starts on a random background video instead of always
+      // index 0 — without this every single reel opened with the same clip.
+      setCurrentReelVideo(
+        payload.videoUrls.length > 0 ? Math.floor(Math.random() * payload.videoUrls.length) : 0
+      );
+      // A fresh reel deserves a fresh chance at playing video — clear any
+      // "gave up on video" state left over from a previous reel attempt.
+      reelVideoFailCountRef.current = 0;
+      setVideoHadError(false);
       const block: ContentBlock = { type: 'reel', data: payload, role: 'ai', topic };
       setContentStream(prev => [...prev, block]);
       addGenerationArtifact(block, topic);
@@ -2965,6 +3200,7 @@ const Transform = () => {
     if (command.learnFormat) setLearnFormat(command.learnFormat);
     if (command.quizFormat) setQuizFormat(command.quizFormat);
     if (command.vizFormat) setVizFormat(command.vizFormat);
+    resetForToolSwitch(command.tab);
     setIsCommandMenuOpen(false);
     setExplainInput((value) => value.replace(/@\w*$/, "").trimStart());
   };
@@ -3234,6 +3470,52 @@ const Transform = () => {
               {label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Session title bar — only shown once this workspace is tied to a
+          Vibe Session (via ?session= or the library picker creating one).
+          Lets the user see/rename the auto-generated topic name. */}
+      {sessionId && sessionTitle && (
+        <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 md:px-4" style={{ borderColor: '#E8E4F5' }}>
+          <Layers className="h-3.5 w-3.5 shrink-0 text-[#6D35FF]" />
+          {isEditingSessionTitle ? (
+            <>
+              <Input
+                autoFocus
+                value={sessionTitleDraft}
+                onChange={(e) => setSessionTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleSaveSessionTitle();
+                  } else if (e.key === "Escape") {
+                    setIsEditingSessionTitle(false);
+                  }
+                }}
+                maxLength={120}
+                className="h-7 max-w-xs rounded-lg text-sm"
+              />
+              <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => void handleSaveSessionTitle()} aria-label="Save session name">
+                <Check className="h-3.5 w-3.5 text-[#6D35FF]" />
+              </Button>
+              <Button size="icon" variant="ghost" className="h-7 w-7 shrink-0" onClick={() => setIsEditingSessionTitle(false)} aria-label="Cancel rename">
+                <X className="h-3.5 w-3.5 text-[#6B7280]" />
+              </Button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setSessionTitleDraft(sessionTitle);
+                setIsEditingSessionTitle(true);
+              }}
+              className="group/title flex min-w-0 items-center gap-1.5 text-left"
+            >
+              <span className="truncate text-sm font-semibold text-[#111827]">{sessionTitle}</span>
+              <Edit3 className="h-3 w-3 shrink-0 text-[#6B7280] opacity-0 transition-opacity group-hover/title:opacity-100" />
+            </button>
+          )}
         </div>
       )}
 
@@ -3560,7 +3842,14 @@ const Transform = () => {
                     <div className="bg-[#6D35FF] text-white px-4 py-3 rounded-2xl rounded-tr-sm text-[14px] font-medium inline-block max-w-[80%] shadow-[0_14px_28px_rgba(109,53,255,0.20)]">{String(block.data)}</div>
                   ) : (
                     <div className="w-full animate-in fade-in slide-in-from-bottom-4 duration-700">
-                      {block.type === 'quiz-interactive' && <QuizBlock rawData={String(block.data)} onRetry={() => handleGenerate(userTopic)} />}
+                      {block.type === 'quiz-interactive' && (
+                        <QuizBlock
+                          rawData={String(block.data)}
+                          onRetry={() => handleGenerate(userTopic)}
+                          onComplete={handleQuizComplete}
+                          onDiveDeeper={(area) => handleGenerate(userTopic, area)}
+                        />
+                      )}
                       {block.type === 'quiz-rapid' && <RapidFireBlock rawData={String(block.data)} onRetry={() => handleGenerate(userTopic)} />}
                       {block.type === 'visual-aids' && <VisualAidsBlock aids={block.data as VisualAidImage[]} />}
 
@@ -3578,14 +3867,14 @@ const Transform = () => {
                                 <SelectTrigger className="h-8 w-28 bg-white/10 border-white/20 text-white text-[11px] rounded-full"><Volume2 className="w-3 h-3 mr-1.5" /> <SelectValue /></SelectTrigger>
                                 <SelectContent className="bg-black border-white/20 text-white">
                                   <SelectItem value="browser">Browser</SelectItem>
-                                  <SelectItem value="deepgram">Deepgram</SelectItem>
+                                  <SelectItem value="server">Edge TTS</SelectItem>
                                 </SelectContent>
                               </Select>
-                              {preferredTtsProvider === 'deepgram' && (
+                              {preferredTtsProvider === 'server' && (
                                 <Select value={selectedTtsVoice} onValueChange={setSelectedTtsVoice}>
                                   <SelectTrigger className="h-8 w-36 bg-white/10 border-white/20 text-white text-[11px] rounded-full"><Mic className="w-3 h-3 mr-1.5" /> <SelectValue /></SelectTrigger>
                                   <SelectContent className="bg-black border-white/20 text-white">
-                                    {DEEPGRAM_AURA_VOICES.map((v) => <SelectItem key={v.id} value={v.id}>{v.label}</SelectItem>)}
+                                    {EDGE_TTS_VOICES.map((v) => <SelectItem key={v.id} value={v.id}>{v.label}</SelectItem>)}
                                   </SelectContent>
                                 </Select>
                               )}
@@ -3651,11 +3940,26 @@ const Transform = () => {
                               {!videoHadError && activeVideo ? (
                                 <video ref={reelVideoRef} key={activeVideo} src={activeVideo} className="absolute inset-0 h-full w-full object-cover" muted playsInline
                                   onLoadedData={() => {
+                                    reelVideoFailCountRef.current = 0;
                                     if (reelVideoRef.current) reelVideoRef.current.playbackRate = getPlaybackSpeed();
                                     if (isReelVideoPlaying) reelVideoRef.current?.play().catch(() => {});
                                   }}
                                   onEnded={() => { setVideoHadError(false); if (isReelVideoPlaying) setCurrentReelVideo((v) => (v + 1) % reel.videoUrls.length); }}
-                                  onError={() => { setVideoHadError(false); setCurrentReelVideo((v) => (v + 1) % reel.videoUrls.length); }}
+                                  onError={() => {
+                                    // Cycling forever on a black screen used to be the failure mode
+                                    // here: every error reset videoHadError back to false and just
+                                    // advanced to the next clip, so if every URL in the list was
+                                    // broken (e.g. the unused local /reels/*.mp4 fallback paths,
+                                    // which don't actually exist on disk) it never gave up and
+                                    // showed the gradient placeholder instead. Now it only keeps
+                                    // trying up to once per clip in the list before bailing out.
+                                    reelVideoFailCountRef.current += 1;
+                                    if (reelVideoFailCountRef.current >= reel.videoUrls.length) {
+                                      setVideoHadError(true);
+                                      return;
+                                    }
+                                    setCurrentReelVideo((v) => (v + 1) % reel.videoUrls.length);
+                                  }}
                                 />
                               ) : (
                                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(109,53,255,0.4),transparent_30%),linear-gradient(160deg,#020617,#111827_45%,#312e81)]" />
@@ -3703,22 +4007,16 @@ const Transform = () => {
                               </div>
                               <div className="grid grid-cols-3 gap-2 text-center">
                                 <div className="rounded-xl bg-[#F8F7FC] p-2"><div className="text-[14px] font-bold">{reel.segments.length}</div><div className="text-[9px] font-bold uppercase text-[#6B7280]">Lines</div></div>
-                                <div className="rounded-xl bg-[#F8F7FC] p-2"><div className="text-[14px] font-bold capitalize">{preferredTtsProvider}</div><div className="text-[9px] font-bold uppercase text-[#6B7280]">Voice</div></div>
+                                <div className="rounded-xl bg-[#F8F7FC] p-2"><div className="text-[14px] font-bold">Andrew</div><div className="text-[9px] font-bold uppercase text-[#6B7280]">Voice</div></div>
                                 <div className="rounded-xl bg-[#F8F7FC] p-2"><div className="text-[14px] font-bold">{playbackSpeed}x</div><div className="text-[9px] font-bold uppercase text-[#6B7280]">Speed</div></div>
                               </div>
                               <div className="grid gap-2 sm:grid-cols-2">
                                 <div className="space-y-1">
-                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Voice Engine</Label>
-                                  <Select value={preferredTtsProvider} onValueChange={(value) => handleReelProviderChange(value as TtsProvider)}>
-                                    <SelectTrigger className="h-9 rounded-xl border-[#E8E4F5] bg-white text-[12px] font-bold">
-                                      <Volume2 className="mr-1.5 h-3.5 w-3.5 text-[#6D35FF]" />
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="deepgram">Deepgram Aura</SelectItem>
-                                      <SelectItem value="browser">Browser Voice</SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Voice</Label>
+                                  <div className="flex h-9 items-center gap-1.5 rounded-xl border border-[#E8E4F5] bg-white px-3 text-[12px] font-bold text-[#111827]">
+                                    <Mic className="h-3.5 w-3.5 shrink-0 text-[#6D35FF]" />
+                                    Edge TTS &middot; Andrew
+                                  </div>
                                 </div>
                                 <div className="space-y-1">
                                   <Label className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Speed</Label>
@@ -3737,22 +4035,6 @@ const Transform = () => {
                                   </Select>
                                 </div>
                               </div>
-                              {preferredTtsProvider === "deepgram" && (
-                                <div className="space-y-1">
-                                  <Label className="text-[10px] font-bold uppercase tracking-wider text-[#6B7280]">Aura Voice</Label>
-                                  <Select value={selectedTtsVoice} onValueChange={(voice) => { if (isSpeaking) handleStop(); setSelectedTtsVoice(voice); }}>
-                                    <SelectTrigger className="h-9 rounded-xl border-[#E8E4F5] bg-white text-[12px] font-bold">
-                                      <Mic className="mr-1.5 h-3.5 w-3.5 text-[#6D35FF]" />
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {DEEPGRAM_AURA_VOICES.map((voice) => (
-                                        <SelectItem key={voice.id} value={voice.id}>{voice.label}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                              )}
                               <div className="max-h-52 space-y-1.5 overflow-y-auto pr-1">
                                 {reel.segments.map((seg, si) => (
                                   <button key={`${seg.speaker}-${si}`} onClick={() => { setCurrentReelSegment(si); setCurrentSentence(seg.text); setActiveCaptionWords(seg.text.split(/\s+/)); setActiveCaptionWord(0); }}

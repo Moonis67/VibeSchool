@@ -81,10 +81,13 @@ Set this Supabase Edge Function secret to enable production CORS:
 ALLOWED_ORIGINS=https://your-production-domain.com
 ```
 
-If using Deepgram TTS, set:
+Note: Deepgram TTS was removed. TTS is now handled by a Railway-hosted Edge
+TTS worker (`workers/tts-server.mjs`), proxied through the Supabase
+`edge-tts` Edge Function. See `workers/README.md` for the full setup.
 
 ```txt
-DEEPGRAM_API_KEY=...
+RAILWAY_TTS_URL=https://<your-tts-service>.up.railway.app/tts
+TTS_SHARED_SECRET=...
 ```
 
 Keep these only in Supabase Edge Function secrets, never frontend env:
@@ -95,8 +98,11 @@ R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 PINECONE_API_KEY
 GROQ_API_KEY
-DEEPGRAM_API_KEY
+RAILWAY_TTS_URL
+TTS_SHARED_SECRET
 ```
+
+`TTS_SHARED_SECRET` must also be set on the Railway TTS service itself (same value) — that's how the Edge Function authenticates to it.
 
 Frontend env should contain only public Vite variables such as:
 
@@ -104,7 +110,7 @@ Frontend env should contain only public Vite variables such as:
 VITE_SUPABASE_URL
 VITE_SUPABASE_PUBLISHABLE_KEY
 VITE_SUPABASE_PROJECT_ID
-VITE_DEEPGRAM_TTS_ENDPOINT
+VITE_EDGE_TTS_ENDPOINT
 ```
 
 ## Remaining Recommendations

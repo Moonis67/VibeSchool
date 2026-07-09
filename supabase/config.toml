@@ -6,9 +6,6 @@ verify_jwt = false
 [functions.transform-vibe]
 verify_jwt = false
 
-[functions.deepgram-tts]
-verify_jwt = false
-
 [functions.edge-tts]
 verify_jwt = false
 

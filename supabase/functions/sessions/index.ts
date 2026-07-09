@@ -109,7 +109,13 @@ serve(async (req) => {
 
     if (action === "open") {
       if (!sessionId) return jsonResponse(req, { error: "Missing session_id." }, 400);
-      if (!(await ownedSessionOrNull(sessionId))) return jsonResponse(req, { error: "Session not found." }, 404);
+      const { data: sessionRow } = await supabase
+        .from("sessions")
+        .select("id, title, subject, created_at, updated_at, last_opened_at")
+        .eq("id", sessionId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!sessionRow) return jsonResponse(req, { error: "Session not found." }, 404);
 
       await supabase
         .from("sessions")
@@ -123,7 +129,7 @@ serve(async (req) => {
         .eq("session_id", sessionId);
       if (sourceError) throw new Error(sourceError.message);
 
-      return jsonResponse(req, { sources: sourceRows || [] });
+      return jsonResponse(req, { session: sessionRow, sources: sourceRows || [] });
     }
 
     if (action === "library") {
