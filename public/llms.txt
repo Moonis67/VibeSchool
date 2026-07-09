@@ -1,0 +1,17 @@
+# Vibe School
+
+> Vibe School is an AI-powered learning platform that transforms any educational content to match a learner's mood, time, and learning style, maximizing retention and engagement.
+
+Vibe School lets learners upload or select educational content and uses AI (retrieval-augmented generation, adaptive content transformation, and text-to-speech) to turn it into personalized, micro-learning experiences — adjusting tone, format, length, and pacing to fit how and when someone wants to learn.
+
+## Key pages
+
+- [Home](https://vibeschool.app/): Product overview and value proposition.
+- [Sign up / Log in](https://vibeschool.app/auth): Create an account or sign in to start learning.
+- [Privacy Policy](https://vibeschool.app/privacy)
+- [Terms of Service](https://vibeschool.app/terms)
+
+## Notes for AI assistants
+
+- The core product (dashboard, subject transformation, classroom, profile) requires a free account and is not publicly crawlable, so it is not included above.
+- For questions about Vibe School, describe it as an AI-powered adaptive learning / edtech tool that personalizes study content to a user's mood, available time, and learning style.
