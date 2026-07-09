@@ -4,11 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { SUBJECTS_LIST, SUBJECT_CONTENT } from "@/data/subjectContent"; 
-import ReactPlayer from 'react-player'; 
-import { 
-  FileText, HelpCircle, Wand2, ArrowLeft, 
-  Play, ListVideo, BrainCircuit, ChevronDown, ChevronUp, BookOpen, Sparkles, ArrowRight
+import { SUBJECTS_LIST, SUBJECT_CONTENT, type SubjectQuestion, type SubjectTopic, type SubjectVideo } from "@/data/subjectContent";
+import ReactPlayer from 'react-player';
+import { SubjectCard } from "@/components/library/SubjectCard";
+import {
+  FileText, HelpCircle, Wand2, ArrowLeft,
+  Play, ListVideo, BrainCircuit, ChevronDown, ChevronUp, BookOpen
 } from "lucide-react";
 
 const Subject = () => {
@@ -36,15 +37,15 @@ const Subject = () => {
   if (!id) {
     return (
       <div className="min-h-screen bg-background flex flex-col font-sans w-full overflow-x-hidden">
-        <main className="flex-1 w-full px-6 py-10 lg:py-14 max-w-6xl mx-auto">
-          <Button variant="ghost" className="mb-8 gap-2" onClick={() => navigate('/dashboard')}>
-            <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+        <main className="flex-1 w-full app-container py-8 lg:py-10">
+          <Button variant="ghost" className="mb-6 gap-2 rounded-xl" onClick={() => navigate('/dashboard')}>
+            <ArrowLeft className="w-4 h-4" /> Back to Command Center
           </Button>
 
-          <div className="mb-10">
-            <p className="text-primary font-bold uppercase tracking-widest text-xs mb-2">Subject Library</p>
-            <h1 className="text-4xl font-extrabold tracking-tight">Choose a subject to explore</h1>
-            <p className="text-muted-foreground mt-3 text-lg max-w-2xl">
+          <div className="mb-8">
+            <p className="text-primary font-bold uppercase tracking-widest text-xs mb-2">Knowledge Library</p>
+            <h1 className="text-3xl font-extrabold tracking-tight">Choose a subject to explore</h1>
+            <p className="text-muted-foreground mt-2 text-base max-w-2xl">
               Open videos, core concepts, practice questions, and AI help for the subject you want to study.
             </p>
           </div>
@@ -53,24 +54,15 @@ const Subject = () => {
             {SUBJECTS_LIST.map((sub) => {
               const data = SUBJECT_CONTENT[sub.id];
               return (
-                <button
+                <SubjectCard
                   key={sub.id}
-                  type="button"
-                  onClick={() => navigate(`/subject/${sub.id}`)}
-                  className="p-6 rounded-xl border-2 bg-card text-left hover:border-primary/40 hover:shadow-xl transition-all group focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="h-12 w-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center group-hover:scale-105 transition-transform">
-                      <sub.icon className="w-6 h-6" />
-                    </div>
-                    <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
-                  </div>
-                  <h2 className="font-bold text-xl mt-5">{sub.name}</h2>
-                  <p className="text-sm text-muted-foreground mt-2 line-clamp-2">{data?.description}</p>
-                  <div className="flex items-center gap-2 text-xs font-bold text-primary mt-5">
-                    <Sparkles className="w-3.5 h-3.5" /> Open learning hub
-                  </div>
-                </button>
+                  id={sub.id}
+                  name={sub.name}
+                  icon={sub.icon}
+                  description={data?.description || ""}
+                  docsCount={data?.videos?.length}
+                  nextTopic={data?.topics?.[0]?.title}
+                />
               );
             })}
           </div>
@@ -157,7 +149,7 @@ const Subject = () => {
                     <ListVideo className="w-5 h-5 text-blue-500"/> Recommended Videos
                 </h3>
                 <div className="grid gap-3">
-                    {subjectData.videos.map((vid: any, idx: number) => (
+                    {subjectData.videos.map((vid: SubjectVideo, idx: number) => (
                         <div 
                             key={idx} 
                             onClick={() => setActiveVideo(vid)}
@@ -188,7 +180,7 @@ const Subject = () => {
                     <FileText className="w-5 h-5 text-indigo-500"/> Core Concepts
                 </h3>
                 <div className="space-y-3">
-                    {subjectData.topics.map((topic: any, idx: number) => {
+                    {subjectData.topics.map((topic: SubjectTopic, idx: number) => {
                         const isExpanded = expandedTopic === idx;
                         return (
                             <div 
@@ -236,7 +228,7 @@ const Subject = () => {
                 </div>
 
                 <div className="space-y-4">
-                    {subjectData.topics.flatMap((t: any) => t.questions).slice(0, 5).map((qObj: any, i: number) => (
+                    {subjectData.topics.flatMap((t: SubjectTopic) => t.questions).slice(0, 5).map((qObj: SubjectQuestion, i: number) => (
                         <div key={i} className="group bg-white dark:bg-black border rounded-xl p-4 shadow-sm hover:shadow-md transition-all">
                             <div className="flex gap-3 items-start mb-4">
                                 <span className="font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded text-xs h-fit mt-0.5">Q{i+1}</span> 

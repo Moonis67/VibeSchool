@@ -1,7 +1,40 @@
 import { Calculator, FlaskConical, Globe, Cpu, Palette, HeartPulse, Code, Music } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+
+export type SubjectQuestion = {
+  q: string;
+  options: string[];
+  ans: string;
+};
+
+export type SubjectTopic = {
+  title: string;
+  content: string;
+  questions: SubjectQuestion[];
+};
+
+export type SubjectVideo = {
+  title: string;
+  url: string;
+  channel: string;
+  views: string;
+};
+
+export type SubjectContent = {
+  title: string;
+  description: string;
+  videos: SubjectVideo[];
+  topics: SubjectTopic[];
+};
+
+export type SubjectListItem = {
+  id: string;
+  name: string;
+  icon: LucideIcon;
+};
 
 // 1. Define the Subject List
-export const SUBJECTS_LIST = [
+export const SUBJECTS_LIST: SubjectListItem[] = [
   { id: "math", name: "Mathematics", icon: Calculator },
   { id: "science", name: "Physics", icon: FlaskConical },
   { id: "history", name: "History", icon: Globe },
@@ -11,7 +44,7 @@ export const SUBJECTS_LIST = [
 ];
 
 // 2. The Massive Content Database
-export const SUBJECT_CONTENT: any = {
+export const SUBJECT_CONTENT: Record<string, SubjectContent> = {
   // --- MATHEMATICS ---
   "math": {
     title: "Mastering Mathematics",

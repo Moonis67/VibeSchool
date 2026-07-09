@@ -8,11 +8,17 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { resolvePDFJS } from "https://esm.sh/pdfjs-serverless@0.4.2";
 import JSZip from "https://esm.sh/jszip@3.10.1";
 import { handleCorsPreflight, jsonResponse, safeErrorMessage } from "../_shared/cors.ts";
-import { buildTempR2Key, deleteR2Object, getR2UserTempUsageBytes, requiredEnv } from "../_shared/r2.ts";
+import {
+  buildTempR2Key,
+  buildUserFileKey,
+  deleteR2Object,
+  getR2UserFilesUsageBytes,
+  requiredEnv,
+  TEMP_STORAGE_CAP_BYTES,
+} from "../_shared/r2.ts";
 import { enforceUserChunkBudget, selectHighQualityChunks } from "../_shared/pinecone.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 
-const TEMP_STORAGE_CAP_BYTES = 50 * 1024 * 1024;
 const MAX_CHUNKS_PER_DOCUMENT = 40;
 const PINECONE_BATCH_SIZE = 50;
 const MAX_REQUEST_BYTES = 55 * 1024 * 1024;
@@ -25,9 +31,21 @@ const ALLOWED_FILE_TYPES: Record<string, Set<string>> = {
 };
 const uploadRateBuckets = new Map<string, number[]>();
 
+declare const Supabase: {
+  ai: {
+    Session: new (model: string) => {
+      run: (text: string, options: { mean_pool: boolean; normalize: boolean }) => Promise<Iterable<number>>;
+    };
+  };
+};
+
 type ExtractedPage = {
   pageNumber: number;
   text: string;
+};
+
+type PdfTextItem = {
+  str?: string;
 };
 
 type TextChunk = {
@@ -138,7 +156,7 @@ async function extractPages(file: File): Promise<ExtractedPage[]> {
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+      const pageText = textContent.items.map((item: PdfTextItem) => item.str || "").join(" ");
       pages.push({ pageNumber: i, text: pageText.replace(/\s+/g, " ").trim() });
     }
 
@@ -205,7 +223,6 @@ function chunkPages(pages: ExtractedPage[]) {
 }
 
 async function generateEmbedding(text: string) {
-  // @ts-ignore Supabase Edge Runtime provides this AI session API.
   const session = new Supabase.ai.Session("gte-small");
   const embedding = await session.run(text, { mean_pool: true, normalize: true });
   return Array.from(embedding as Iterable<number>);
@@ -314,12 +331,12 @@ serve(async (req) => {
       return jsonResponse(req, { error: "Unsupported file type. Upload PDF, TXT, or DOCX files only." }, 415);
     }
 
-    const currentUsage = await getR2UserTempUsageBytes(userId);
+    const currentUsage = await getR2UserFilesUsageBytes(userId);
     if (currentUsage + file.size > TEMP_STORAGE_CAP_BYTES) {
       const remainingMb = bytesToMb(Math.max(0, TEMP_STORAGE_CAP_BYTES - currentUsage));
       return jsonResponse(
         req,
-        { error: `Temporary storage limit reached. You have ${remainingMb} MB remaining, and this file is ${bytesToMb(file.size)} MB.` },
+        { error: `Storage limit reached. You have ${remainingMb} MB remaining, and this file is ${bytesToMb(file.size)} MB.` },
         413,
       );
     }
@@ -353,6 +370,12 @@ serve(async (req) => {
 
     const chunksUpserted = await upsertPineconeVectors({ userId, documentId, chunks });
 
+    // Move the file into its permanent library key instead of deleting it —
+    // the user can keep reusing it as a source across sessions.
+    const permanentKey = buildUserFileKey(userId, documentId, safeFileName);
+    await uploadToR2Temp(file, permanentKey);
+    await deleteR2Object(r2Key);
+
     await supabase
       .from("documents")
       .update({
@@ -360,11 +383,10 @@ serve(async (req) => {
         processed_at: new Date().toISOString(),
         chunk_count: chunksUpserted,
         file_hash: fileHash,
+        size_bytes: file.size,
       })
       .eq("document_id", documentId)
       .eq("user_id", userId);
-
-    await deleteR2Object(r2Key);
 
     return jsonResponse(
       req,
@@ -377,8 +399,8 @@ serve(async (req) => {
       },
       200,
     );
-  } catch (error: any) {
-    console.error(`[process-document] ${error?.message || "failed"}`);
+  } catch (error: unknown) {
+    console.error(`[process-document] ${error instanceof Error ? error.message : "failed"}`);
 
     if (supabase && documentId) {
       try {

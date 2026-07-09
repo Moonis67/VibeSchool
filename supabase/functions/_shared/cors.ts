@@ -13,10 +13,11 @@ const configuredOrigins = (Deno.env.get("ALLOWED_ORIGINS") || "")
   .filter(Boolean);
 
 const allowedOrigins = new Set([...defaultAllowedOrigins, ...configuredOrigins]);
+const allowAnyOrigin = configuredOrigins.length === 0 || allowedOrigins.has("*");
 
 export function getCorsHeaders(req: Request) {
   const origin = req.headers.get("Origin") || "";
-  const allowedOrigin = allowedOrigins.has(origin) ? origin : "";
+  const allowedOrigin = origin && (allowAnyOrigin || allowedOrigins.has(origin)) ? origin : "";
 
   return {
     ...(allowedOrigin ? { "Access-Control-Allow-Origin": allowedOrigin } : {}),

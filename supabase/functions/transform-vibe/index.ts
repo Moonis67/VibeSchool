@@ -4,6 +4,43 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { handleCorsPreflight, jsonResponse, safeErrorMessage } from "../_shared/cors.ts";
 
+declare const Supabase: {
+  ai: {
+    Session: new (model: string) => {
+      run: (text: string, options: { mean_pool: boolean; normalize: boolean }) => Promise<Iterable<number>>;
+    };
+  };
+};
+
+type JsonObject = Record<string, unknown>;
+
+type PineconeMatch = {
+  metadata?: {
+    text?: unknown;
+    page_number?: unknown;
+    document_id?: unknown;
+  };
+  score?: number;
+};
+
+type RetrievedChunk = {
+  text: string;
+  page_number?: unknown;
+  document_id?: unknown;
+  score?: number;
+};
+
+type DocumentRow = {
+  document_id: string;
+  processing_status?: string;
+};
+
+type GroqResponse = {
+  choices?: Array<{ message?: { content?: string } }>;
+};
+
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : "failed";
+
 const AI_RATE_LIMIT = 20;
 const AI_RATE_WINDOW_MS = 60 * 1000;
 const MAX_BODY_BYTES = 64 * 1024;
@@ -23,7 +60,6 @@ function getBearerToken(req: Request) {
 }
 
 async function generateEmbedding(text: string) {
-  // @ts-ignore Supabase Edge Runtime provides this AI session API.
   const aiSession = new Supabase.ai.Session('gte-small');
   const embedding = await aiSession.run(text, { mean_pool: true, normalize: true });
   return Array.from(embedding as Iterable<number>);
@@ -32,7 +68,7 @@ async function generateEmbedding(text: string) {
 async function queryPinecone(params: {
   query: string;
   userId: string;
-  documentId?: string | null;
+  documentIds?: string[];
   topK?: number;
 }) {
   const apiKey = requiredEnv("PINECONE_API_KEY");
@@ -42,8 +78,10 @@ async function queryPinecone(params: {
     user_id: { "$eq": params.userId },
   };
 
-  if (params.documentId) {
-    filter.document_id = { "$eq": params.documentId };
+  if (params.documentIds && params.documentIds.length === 1) {
+    filter.document_id = { "$eq": params.documentIds[0] };
+  } else if (params.documentIds && params.documentIds.length > 1) {
+    filter.document_id = { "$in": params.documentIds };
   }
 
   const response = await fetch(`${indexHost}/query`, {
@@ -65,15 +103,15 @@ async function queryPinecone(params: {
     throw new Error(`Pinecone query failed (${response.status}): ${details || response.statusText}`);
   }
 
-  const data = await response.json();
+  const data = await response.json() as { matches?: PineconeMatch[] };
   return (data.matches || [])
-    .map((match: any) => ({
+    .map((match): RetrievedChunk => ({
       text: match.metadata?.text || "",
       page_number: match.metadata?.page_number,
       document_id: match.metadata?.document_id,
       score: match.score,
     }))
-    .filter((match: any) => typeof match.text === "string" && match.text.trim().length > 0);
+    .filter((match) => typeof match.text === "string" && match.text.trim().length > 0);
 }
 
 function enforceRateLimit(userId: string) {
@@ -135,36 +173,37 @@ serve(async (req) => {
       return jsonResponse(req, { error: safeErrorMessage(429) }, 429);
     }
 
-    const body = await req.json().catch(() => null);
+    const body = await req.json().catch(() => null) as JsonObject | null;
     if (!body || typeof body !== "object") {
       return jsonResponse(req, { error: safeErrorMessage(400) }, 400);
     }
     
     // Extract parameters from BOTH potential frontend payloads
-    const { 
+    const {
       material_id,
+      session_id,
     } = body;
 
-    const topic = clampText((body as any).topic, 800);
-    const content = clampText((body as any).content, MAX_TEXT_INPUT_CHARS);
-    const sourceName = clampText((body as any).source_name, 180);
-    const sessionContext = clampText((body as any).session_context, 3200);
-    const incomingSystemPrompt = clampText((body as any).systemPrompt, 2000);
-    const eduLevel = enumValue((body as any).eduLevel, ["school", "college", "university"], "university");
-    const grade = clampText((body as any).grade, 20);
-    const collegeYear = clampText((body as any).collegeYear, 20);
-    const major = clampText((body as any).major, 120);
-    const activeTab = enumValue((body as any).activeTab, ["learn", "quiz", "visualize", "plan"], "learn");
-    const mood = enumValue((body as any).mood, ["strict", "funny", "professional", "encouraging", "socratic", "hype", "enthusiastic"], "hype");
-    const learningStyle = enumValue((body as any).learningStyle, ["visual", "socratic", "analogical", "academic", "adaptive"], "academic");
-    const timeAvailable = clampText((body as any).timeAvailable, 10) || "15";
-    const goal = enumValue((body as any).goal, ["concept", "exam", "interview", "project"], "concept");
-    const experienceLevel = enumValue((body as any).experienceLevel, ["beginner", "rusty", "intermediate", "advanced"], "beginner");
-    const profileContext = clampText((body as any).profileContext, 200);
-    const quizDifficulty = enumValue((body as any).quizDifficulty, ["basic", "advanced"], "basic");
-    const quizFormat = enumValue((body as any).quizFormat, ["mcq", "rapid"], "mcq");
-    const learnFormat = enumValue((body as any).learnFormat, ["lecture", "flashcards", "podcast", "reel"], "lecture");
-    const vizFormat = enumValue((body as any).vizFormat, ["flowchart", "dld"], "flowchart");
+    const topic = clampText(body.topic, 800);
+    const content = clampText(body.content, MAX_TEXT_INPUT_CHARS);
+    const sourceName = clampText(body.source_name, 180);
+    const sessionContext = clampText(body.session_context, 3200);
+    const incomingSystemPrompt = clampText(body.systemPrompt, 2000);
+    const eduLevel = enumValue(body.eduLevel, ["school", "college", "university"], "university");
+    const grade = clampText(body.grade, 20);
+    const collegeYear = clampText(body.collegeYear, 20);
+    const major = clampText(body.major, 120);
+    const activeTab = enumValue(body.activeTab, ["learn", "quiz", "visualize", "plan"], "learn");
+    const mood = enumValue(body.mood, ["strict", "funny", "professional", "encouraging", "socratic", "hype", "enthusiastic"], "hype");
+    const learningStyle = enumValue(body.learningStyle, ["visual", "socratic", "analogical", "academic", "adaptive"], "academic");
+    const timeAvailable = clampText(body.timeAvailable, 10) || "15";
+    const goal = enumValue(body.goal, ["concept", "exam", "interview", "project"], "concept");
+    const experienceLevel = enumValue(body.experienceLevel, ["beginner", "rusty", "intermediate", "advanced"], "beginner");
+    const profileContext = clampText(body.profileContext, 200);
+    const quizDifficulty = enumValue(body.quizDifficulty, ["basic", "advanced"], "basic");
+    const quizFormat = enumValue(body.quizFormat, ["mcq", "rapid"], "mcq");
+    const learnFormat = enumValue(body.learnFormat, ["lecture", "flashcards", "podcast", "reel"], "lecture");
+    const vizFormat = enumValue(body.vizFormat, ["flowchart", "dld"], "flowchart");
 
     // --- INTERCEPT ROUTE: Is this a Live Classroom audio event? ---
     const isClassroomMode = !topic && content;
@@ -180,9 +219,62 @@ serve(async (req) => {
       finalUserPrompt = content;
       finalTemperature = 0.5; // Lower variance for direct answers
     } else {
-      // --- STANDARD RAG PROFESSOR PIPELINE (Transform Hub) ---
+  // --- STANDARD RAG PROFESSOR PIPELINE (Transform Hub) ---
       const userQuery = topic || "Overview";
-      const hasUploadedDocument = Boolean(material_id);
+      // The frontend can send several documents at once (up to 10) as a
+      // comma-joined list of ids. This is always an explicit, user-picked
+      // selection — the backend never widens it to "everything this user
+      // has ever uploaded."
+      const explicitDocumentIds = String(material_id || "")
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean)
+        .slice(0, 10);
+
+      const sessionIdValue = clampText(session_id, 100);
+      let sessionActiveDocumentIds: string[] = [];
+
+      if (sessionIdValue && currentUser) {
+        const { data: ownedSession } = await supabase
+          .from("sessions")
+          .select("id")
+          .eq("id", sessionIdValue)
+          .eq("user_id", currentUser.id)
+          .maybeSingle();
+
+        if (ownedSession) {
+          // Attaching a file to a session sticks: once picked, it stays an
+          // active source for every later question in that session until
+          // the user removes it (session_documents.is_active), even though
+          // this request only sends material_id the turn it was picked.
+          if (explicitDocumentIds.length > 0) {
+            await supabase.from("session_documents").upsert(
+              explicitDocumentIds.map((documentId) => ({
+                session_id: sessionIdValue,
+                document_id: documentId,
+                is_active: true,
+              })),
+              { onConflict: "session_id,document_id" },
+            );
+          }
+
+          const { data: activeRows } = await supabase
+            .from("session_documents")
+            .select("document_id")
+            .eq("session_id", sessionIdValue)
+            .eq("is_active", true);
+
+          sessionActiveDocumentIds = (activeRows || []).map((row) => String(row.document_id));
+
+          await supabase
+            .from("sessions")
+            .update({ last_opened_at: new Date().toISOString() })
+            .eq("id", sessionIdValue);
+        }
+      }
+
+      const requestedDocumentIds = Array.from(new Set([...explicitDocumentIds, ...sessionActiveDocumentIds])).slice(0, 10);
+      const hasUploadedDocument = requestedDocumentIds.length > 0;
       const documentInstruction = hasUploadedDocument && isDocumentInstruction(userQuery);
       const sourceTitle = displaySourceName(sourceName) || "the uploaded document";
       if (hasUploadedDocument) {
@@ -198,34 +290,38 @@ serve(async (req) => {
       let retrievedContext = "";
       let ragStatus = "NO_DOCUMENT";
 
-      if (material_id) {
+      if (hasUploadedDocument) {
         try {
           if (!currentUser) {
             ragStatus = "AUTH_REQUIRED";
           } else {
-            const requestedDocumentId = String(material_id);
-            const { data: documentRow, error: documentError } = await supabase
+            const { data: documentRows, error: documentError } = await supabase
               .from("documents")
               .select("document_id, user_id, processing_status")
-              .eq("document_id", requestedDocumentId)
-              .eq("user_id", currentUser.id)
-              .single();
+              .in("document_id", requestedDocumentIds)
+              .eq("user_id", currentUser.id);
 
-            if (documentError || !documentRow) {
+            const rows = (documentRows || []) as DocumentRow[];
+            const processedDocumentIds = rows
+              .filter((row) => row.processing_status === "processed")
+              .map((row) => row.document_id);
+
+            if (documentError || !documentRows || documentRows.length === 0) {
               ragStatus = "DOCUMENT_NOT_FOUND";
-            } else if (documentRow.processing_status !== "processed") {
-              ragStatus = `DOCUMENT_${String(documentRow.processing_status || "UNKNOWN").toUpperCase()}`;
+            } else if (processedDocumentIds.length === 0) {
+              const latestStatus = rows[0]?.processing_status || "UNKNOWN";
+              ragStatus = `DOCUMENT_${String(latestStatus).toUpperCase()}`;
             } else {
               const matchedChunks = await queryPinecone({
                 query: retrievalQuery,
                 userId: currentUser.id,
-                documentId: requestedDocumentId,
-                topK: 6,
+                documentIds: processedDocumentIds,
+                topK: processedDocumentIds.length > 1 ? Math.min(24, processedDocumentIds.length * 6) : 6,
               });
 
               if (matchedChunks.length > 0) {
                 retrievedContext = matchedChunks
-                  .map((chunk: any) => {
+                  .map((chunk) => {
                     const page = chunk.page_number ? `Page ${chunk.page_number}` : "Uploaded document";
                     return `[${page}]\n${chunk.text}`;
                   })
@@ -236,34 +332,15 @@ serve(async (req) => {
               }
             }
           }
-        } catch (ragError: any) {
-          console.error("RAG Pipeline Exception:", ragError?.message || "failed");
-          ragStatus = "EXCEPTION";
-        }
-      } else if (currentUser) {
-        try {
-          const matchedChunks = await queryPinecone({
-            query: userQuery,
-            userId: currentUser.id,
-            topK: 6,
-          });
-
-          if (matchedChunks.length > 0) {
-            retrievedContext = matchedChunks
-              .map((chunk: any) => {
-                const page = chunk.page_number ? `Page ${chunk.page_number}` : "Uploaded document";
-                return `[${page}]\n${chunk.text}`;
-              })
-              .join("\n\n---\n\n");
-            ragStatus = "CONTEXT_FOUND";
-          } else {
-            ragStatus = "NO_MATCHES";
-          }
-        } catch (ragError: any) {
-          console.error("RAG Pipeline Exception:", ragError?.message || "failed");
+        } catch (ragError: unknown) {
+          console.error("RAG Pipeline Exception:", getErrorMessage(ragError));
           ragStatus = "EXCEPTION";
         }
       }
+      // No blind fallback here: if the student hasn't attached a file
+      // (directly or as an active session source), the AI must not search
+      // the user's whole upload history for "relevant" chunks — that was
+      // leaking unrelated document content into unrelated answers.
 
       let adaptiveConstraints = "";
       if (eduLevel === 'school') {
@@ -422,15 +499,15 @@ serve(async (req) => {
       }),
     });
 
-    const data = await response.json();
+    const data = await response.json() as GroqResponse;
     if (!response.ok) throw new Error("LLM upstream request failed.");
 
     const reply = data.choices?.[0]?.message?.content;
     
     return jsonResponse(req, { content: reply || "", suggestions: responseSuggestions });
 
-  } catch (error: any) {
-    console.error("Function Root Error:", error?.message || "failed");
+  } catch (error: unknown) {
+    console.error("Function Root Error:", getErrorMessage(error));
     return jsonResponse(req, { error: safeErrorMessage(400) }, 400);
   }
 });

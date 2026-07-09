@@ -2,7 +2,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Navbar } from "@/components/layout/Navbar";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,7 +40,7 @@ const Profile = () => {
 
       setFullName(data?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || "Scholar");
       setAvatarUrl(data?.avatar_url || user.user_metadata?.avatar_url || null);
-    } catch (err: any) {
+    } catch {
       toast.error("Failed to load profile parameters.");
     } finally {
       setLoading(false);
@@ -94,7 +93,7 @@ const Profile = () => {
 
       setAvatarUrl(publicUrl);
       toast.success("Profile photo synchronized!");
-    } catch (err: any) {
+    } catch {
       toast.error("File upload failed. Use a JPG, PNG, or WebP image under 5 MB.");
     } finally {
       setUploading(false);
@@ -119,7 +118,7 @@ const Profile = () => {
       if (error) throw error;
       toast.success("Changes saved successfully!");
       navigate("/dashboard");
-    } catch (err: any) {
+    } catch {
       toast.error("Could not save profile changes.");
     } finally {
       setLoading(false);
@@ -128,15 +127,14 @@ const Profile = () => {
 
   return (
     <div className="min-h-screen bg-background font-sans">
-      <Navbar />
-      <div className="container mx-auto px-4 pt-28 pb-12 max-w-md">
-        
-        <Button variant="ghost" className="mb-6 gap-2" onClick={() => navigate("/dashboard")}>
-          <ArrowLeft className="w-4 h-4" /> Back to Dashboard
+      <div className="app-container pt-10 pb-12 max-w-md">
+
+        <Button variant="ghost" className="mb-6 gap-2 rounded-xl" onClick={() => navigate("/dashboard")}>
+          <ArrowLeft className="w-4 h-4" /> Back to Command Center
         </Button>
 
-        <Card className="p-8 border-2 shadow-xl bg-card/50 backdrop-blur-md">
-          <h2 className="text-2xl font-black mb-6 text-center tracking-tight">Edit Account Profile</h2>
+        <Card className="p-8 rounded-2xl border border-border shadow-md bg-card">
+          <h2 className="text-xl font-extrabold mb-6 text-center tracking-tight">Edit Account Profile</h2>
           
           <div className="flex flex-col items-center gap-6">
             {/* AVATAR UPLOAD TRIGGER ZONE */}

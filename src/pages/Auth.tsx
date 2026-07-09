@@ -7,6 +7,8 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Sparkles, Mail, Lock, Loader2, ArrowRight } from "lucide-react";
 
+const getErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error || "");
+
 const GoogleIcon = ({ className }: { className?: string }) => (
   <svg viewBox="0 0 24 24" className={className} xmlns="http://www.w3.org/2000/svg">
     <path
@@ -64,8 +66,8 @@ const Auth = () => {
         },
       });
       if (error) throw error;
-    } catch (error: any) {
-      toast.error(error.message || `Failed to sign in with ${provider}`);
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error) || `Failed to sign in with ${provider}`);
       setIsOAuthLoading(null);
     }
   };
@@ -92,14 +94,15 @@ const Auth = () => {
         if (error) throw error;
         toast.success("Account created successfully!");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const message = getErrorMessage(error);
       // Handle specific "400" errors gracefully
-      if (error.message.includes("Invalid login credentials")) {
+      if (message.includes("Invalid login credentials")) {
         toast.error("Incorrect email or password.");
-      } else if (error.message.includes("User already registered")) {
+      } else if (message.includes("User already registered")) {
         toast.error("This email is already taken. Please sign in.");
       } else {
-        toast.error(error.message);
+        toast.error(message);
       }
     } finally {
       setIsLoading(false);

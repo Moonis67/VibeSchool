@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Sparkles, LogOut, User, Menu, X } from "lucide-react";
+import { LogOut, User, Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { clearSensitiveClientState } from "@/lib/security";
+import vibeschoolLogo from "@/assets/vibeschool-logo-full.png";
 
 export const Navbar = () => {
   const navigate = useNavigate();
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -56,15 +58,14 @@ export const Navbar = () => {
       >
         <div className="max-w-7xl mx-auto px-6 h-[72px] flex items-center justify-between">
           {/* Logo */}
-          <Link to="/" className="flex items-center gap-2.5 group">
-            <div className="relative w-9 h-9 rounded-xl bg-gradient-to-br from-primary via-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-primary/25 group-hover:shadow-primary/40 transition-shadow duration-300">
-              <Sparkles className="w-4.5 h-4.5 text-white" />
-              <div className="absolute inset-0 rounded-xl bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-            </div>
-            <span className="text-xl font-extrabold tracking-tight">
-              <span className={scrolled ? "text-foreground" : "text-white"}>Vibe</span>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-400">School</span>
-            </span>
+          <Link to="/" className="flex items-center group">
+            <img
+              src={vibeschoolLogo}
+              alt="VibeSchool"
+              className={`h-8 w-auto transition-all duration-300 ${
+                scrolled ? "" : "brightness-0 invert"
+              }`}
+            />
           </Link>
 
           {/* Desktop Nav Links */}

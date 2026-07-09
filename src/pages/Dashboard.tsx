@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Navbar } from "@/components/layout/Navbar";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -24,6 +23,8 @@ import {
 } from "lucide-react";
 import { SUBJECTS_LIST } from "@/data/subjectContent";
 import { clearSensitiveClientState } from "@/lib/security";
+import { VibeSessionsCard } from "@/components/dashboard/VibeSessionsCard";
+import { StorageLibraryCard } from "@/components/dashboard/StorageLibraryCard";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -51,7 +52,7 @@ const Dashboard = () => {
 
       setFullName(data?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || "Scholar");
       setAvatarUrl(data?.avatar_url || user.user_metadata?.avatar_url || null);
-    } catch (err: any) {
+    } catch {
       toast.error("Could not refresh profile details.");
     }
   };
@@ -73,7 +74,7 @@ const Dashboard = () => {
       clearSensitiveClientState();
       toast.success("Signed out successfully.");
       navigate("/");
-    } catch (err: any) {
+    } catch {
       toast.error("Failed to sign out.");
     }
   };
@@ -154,9 +155,7 @@ const Dashboard = () => {
 
   return (
     <div className="min-h-screen bg-background font-sans relative">
-      <Navbar />
-
-      <div className="container mx-auto px-4 py-24 max-w-6xl space-y-16 relative">
+      <div className="container mx-auto px-4 py-12 max-w-6xl space-y-16 relative">
         <div className="flex flex-col items-end gap-2 mb-6 md:mb-0 md:absolute md:top-6 md:right-4 lg:right-0 z-30 animate-in fade-in duration-300">
           <div className="flex gap-2">
             <Button
@@ -244,6 +243,11 @@ const Dashboard = () => {
             </button>
           ))}
         </div>
+
+        <section className="grid md:grid-cols-2 gap-6 animate-in slide-in-from-bottom-4 duration-700">
+          <VibeSessionsCard />
+          <StorageLibraryCard />
+        </section>
 
         <section className="animate-in slide-in-from-bottom-6 duration-700 delay-100">
           <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">

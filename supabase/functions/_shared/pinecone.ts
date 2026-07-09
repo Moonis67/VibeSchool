@@ -5,6 +5,23 @@
 import { requiredEnv } from "./r2.ts";
 
 const DELETE_BATCH_SIZE = 500;
+type SupabaseLikeClient = {
+  from: (table: string) => {
+    select: (columns: string) => {
+      eq: (column: string, value: unknown) => {
+        eq: (column: string, value: unknown) => {
+          order: (column: string, options: { ascending: boolean }) => Promise<{
+            data: Array<{ document_id: string; chunk_count?: number; processed_at?: string }>;
+            error: { message: string } | null;
+          }>;
+        };
+      };
+    };
+    delete: () => {
+      eq: (column: string, value: unknown) => Promise<unknown>;
+    };
+  };
+};
 
 export async function deletePineconeVectorsForDocument(documentId: string, chunkCount: number) {
   if (!chunkCount || chunkCount <= 0) return;
@@ -34,7 +51,7 @@ const USER_ACTIVE_CHUNK_CAP = 200;
 // Evicts the user's oldest processed documents (Pinecone vectors + Supabase row)
 // until there is room for `incomingChunkCount` more active chunks.
 export async function enforceUserChunkBudget(
-  supabase: any,
+  supabase: SupabaseLikeClient,
   userId: string,
   incomingChunkCount: number,
 ) {

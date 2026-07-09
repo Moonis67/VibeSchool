@@ -1,12 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleCorsPreflight, jsonResponse, safeErrorMessage } from "../_shared/cors.ts";
-import { buildTempR2Key, createPresignedPutUrl, getR2UserTempUsageBytes, requiredEnv } from "../_shared/r2.ts";
+import {
+  buildTempR2Key,
+  createPresignedPutUrl,
+  getR2UserFilesUsageBytes,
+  requiredEnv,
+  TEMP_STORAGE_CAP_BYTES,
+} from "../_shared/r2.ts";
 
-// Free-tier MVP: R2 only ever holds a file transiently while it is being
-// extracted + embedded. This cap covers everything currently sitting in a
-// user's temp/ prefix, not a permanent storage quota.
-const TEMP_STORAGE_CAP_BYTES = 50 * 1024 * 1024;
 const COMPRESSION_THRESHOLD_BYTES = 3 * 1024 * 1024;
 const MAX_FILE_BYTES = TEMP_STORAGE_CAP_BYTES;
 const SIGNED_URL_TTL_SECONDS = 15 * 60;
@@ -86,10 +88,10 @@ serve(async (req) => {
     const validationError = validateMetadata(fileName, fileType, fileSize);
     if (validationError) return jsonResponse(req, { error: validationError }, 415);
 
-    const currentUsage = await getR2UserTempUsageBytes(userData.user.id);
+    const currentUsage = await getR2UserFilesUsageBytes(userData.user.id);
     if (currentUsage + fileSize > TEMP_STORAGE_CAP_BYTES) {
       return jsonResponse(req, {
-        error: `Temporary storage limit reached. You have ${bytesToMb(Math.max(0, TEMP_STORAGE_CAP_BYTES - currentUsage))} MB remaining while other uploads finish processing, and this file is ${bytesToMb(fileSize)} MB. Try again shortly.`,
+        error: `Storage limit reached. You have ${bytesToMb(Math.max(0, TEMP_STORAGE_CAP_BYTES - currentUsage))} MB remaining out of your ${bytesToMb(TEMP_STORAGE_CAP_BYTES)} MB library, and this file is ${bytesToMb(fileSize)} MB. Delete an old file to make room.`,
       }, 413);
     }
 

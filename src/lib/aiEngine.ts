@@ -934,7 +934,7 @@ export function generateFollowUp(question: string, originalTopic: string): strin
 
 function generateKBLecture(kb: TopicKnowledge, style: string, mood: string, time: string, eduLevel: string, grade?: string, goal = "concept", experience = "beginner", profileContext = "general learning"): string {
   const length = getContentLength(time);
-  let sections: string[] = [];
+  const sections: string[] = [];
 
   // Introduction
   sections.push(`## ${kb.title}\n\n${kb.summary}`);

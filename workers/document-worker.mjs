@@ -50,6 +50,31 @@ const r2 = new AwsClient({
 
 const encodeR2Key = (key) => key.split("/").map(encodeURIComponent).join("/");
 const buildTempR2Key = (userId, documentId, fileName) => `temp/${userId}/${documentId}/${fileName}`;
+const buildUserFileKey = (userId, documentId, fileName) => `files/${userId}/${documentId}/${fileName}`;
+
+const MIME_BY_EXTENSION = {
+  pdf: "application/pdf",
+  txt: "text/plain",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
+
+function mimeForFile(fileName) {
+  const extension = String(fileName || "").split(".").pop()?.toLowerCase();
+  return MIME_BY_EXTENSION[extension] || "application/octet-stream";
+}
+
+async function uploadToR2(r2Key, buffer, contentType) {
+  const url = `${R2_ENDPOINT.replace(/\/$/, "")}/${R2_BUCKET_NAME}/${encodeR2Key(r2Key)}`;
+  const response = await r2.fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: buffer,
+  });
+  if (!response.ok) {
+    const details = await response.text().catch(() => "");
+    throw new Error(`R2 upload failed (${response.status}): ${details || response.statusText}`);
+  }
+}
 
 async function downloadFromR2(r2Key) {
   const url = `${R2_ENDPOINT.replace(/\/$/, "")}/${R2_BUCKET_NAME}/${encodeR2Key(r2Key)}`;
@@ -293,7 +318,7 @@ async function deletePineconeVectorsForDocument(documentId, chunkCount) {
 async function enforceUserChunkBudget(userId, incomingChunkCount) {
   const { data: rows, error } = await supabase
     .from("documents")
-    .select("document_id, chunk_count, processed_at")
+    .select("document_id, chunk_count, processed_at, user_id, file_name")
     .eq("user_id", userId)
     .eq("processing_status", "processed")
     .order("processed_at", { ascending: true });
@@ -307,6 +332,7 @@ async function enforceUserChunkBudget(userId, incomingChunkCount) {
     const oldest = queue.shift();
     console.log(`[worker] evicting ${oldest.document_id} to stay under the ${USER_ACTIVE_CHUNK_CAP}-chunk user budget`);
     await deletePineconeVectorsForDocument(oldest.document_id, Number(oldest.chunk_count || 0));
+    await deleteFromR2(buildUserFileKey(oldest.user_id, oldest.document_id, oldest.file_name));
     await supabase.from("documents").delete().eq("document_id", oldest.document_id);
     total -= Number(oldest.chunk_count || 0);
   }
@@ -353,6 +379,14 @@ async function processDocument(documentRow) {
   await enforceUserChunkBudget(documentRow.user_id, chunks.length);
 
   const chunksUpserted = await upsertPineconeVectors(documentRow, chunks);
+
+  // Move the file out of temp/ into its permanent library key instead of
+  // deleting it — the user can keep reusing it as a source across sessions
+  // until they delete it or hit their storage cap.
+  const permanentKey = buildUserFileKey(documentRow.user_id, documentRow.document_id, documentRow.file_name);
+  await uploadToR2(permanentKey, fileBuffer, mimeForFile(documentRow.file_name));
+  await deleteFromR2(r2Key);
+
   await supabase
     .from("documents")
     .update({
@@ -360,10 +394,10 @@ async function processDocument(documentRow) {
       processed_at: new Date().toISOString(),
       chunk_count: chunksUpserted,
       file_hash: fileHash,
+      size_bytes: fileBuffer.length,
     })
     .eq("document_id", documentRow.document_id);
 
-  await deleteFromR2(r2Key);
   console.log(`[worker] processed ${documentRow.document_id}: ${chunksUpserted} chunks`);
 }
 

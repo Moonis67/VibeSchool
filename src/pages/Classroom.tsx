@@ -5,10 +5,9 @@ import { answerQuestion, generateNotesFromTranscript } from "@/lib/classroomEngi
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
-import { Navbar } from "@/components/layout/Navbar";
-import { 
-  Mic, MicOff, Save, ArrowLeft, BrainCircuit, Sparkles, 
-  Play, Loader2, Clock, Zap, ChevronDown, ChevronUp, RefreshCw, Copy, Download
+import {
+  Mic, MicOff, Save, ArrowLeft, BrainCircuit, Sparkles,
+  Play, Loader2, Clock, Zap, ChevronDown, ChevronUp, RefreshCw, Copy, Download, Bookmark
 } from "lucide-react";
 
 // --- SPEECH RECOGNITION SETUP ---
@@ -24,8 +23,10 @@ const Classroom = () => {
   const [qaHistory, setQaHistory] = useState<Array<{id: string, query: string, answer: string, explanation: string, time: string}>>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
-  const [isThinking, setIsThinking] = useState(false); 
+  const [isThinking, setIsThinking] = useState(false);
   const [generatedNotes, setGeneratedNotes] = useState<string | null>(null);
+  // Local-only bookmarking — there's no backend table for this yet, so it isn't persisted.
+  const [markedMoments, setMarkedMoments] = useState<string[]>([]);
 
   // Refs
   const recognitionRef = useRef<SpeechRecognition | null>(null);
@@ -200,6 +201,12 @@ const Classroom = () => {
 
   const resetMic = () => { window.location.reload(); };
 
+  const markImportant = () => {
+    const snippet = (transcript.trim().split(/\s+/).slice(-12).join(" ") || "Marked moment").trim();
+    setMarkedMoments((prev) => [...prev, snippet]);
+    toast.success("Marked as important");
+  };
+
   const handleFinishLecture = async () => {
       if (!transcript.trim()) { toast.error("No content!"); return; }
       isListeningRef.current = false;
@@ -222,13 +229,13 @@ const Classroom = () => {
           if (error) throw error;
           setGeneratedNotes(data.content);
           toast.success("Notes Ready!");
-       } catch (e: any) { 
+       } catch { 
            // Fallback: generate notes locally
            try {
                const localNotes = generateNotesFromTranscript(transcript);
                setGeneratedNotes(localNotes);
                toast.success("Notes generated locally!");
-           } catch (fallbackErr: any) {
+           } catch {
                toast.error("Note generation failed.");
            }
        } finally { setIsGeneratingNotes(false); }
@@ -247,24 +254,22 @@ const Classroom = () => {
 
   return (
     <div className="min-h-screen bg-background font-sans lg:h-screen lg:flex lg:flex-col lg:overflow-hidden">
-      <Navbar />
-      
-      <div className="container mx-auto px-4 pt-24 pb-4 flex-1 flex flex-col max-w-[1600px]">
-        
+      <div className="app-container pt-6 pb-4 flex-1 flex flex-col">
+
         {/* HEADER */}
         <div className="flex flex-col md:flex-row items-center justify-between mb-4 shrink-0 gap-4">
             <div className="flex items-center gap-3 w-full md:w-auto">
-                <Button variant="ghost" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
+                <Button variant="ghost" size="icon" className="rounded-xl" onClick={() => navigate('/dashboard')}><ArrowLeft className="w-5 h-5" /></Button>
                 <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
-                        <Mic className={`w-6 h-6 ${isListening ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`} />
-                        Classroom Mode
+                    <h1 className="text-xl font-bold flex items-center gap-2">
+                        <Mic className={`w-5 h-5 ${isListening ? 'text-red-500 animate-pulse' : 'text-muted-foreground'}`} />
+                        Live Lecture Cockpit
                     </h1>
                     <p className="text-sm text-muted-foreground">{isListening ? "Listening..." : "Mic paused"}</p>
                 </div>
             </div>
              <div className="hidden md:block">
-                 <Button variant="ghost" size="icon" onClick={resetMic} title="Force Reset"><RefreshCw className="w-4 h-4 text-muted-foreground" /></Button>
+                 <Button variant="ghost" size="icon" className="rounded-xl" onClick={resetMic} title="Force Reset"><RefreshCw className="w-4 h-4 text-muted-foreground" /></Button>
             </div>
         </div>
 
@@ -291,35 +296,48 @@ const Classroom = () => {
                                     <div className="space-y-4">
                                         <p className="text-xl leading-relaxed text-foreground/90 whitespace-pre-wrap font-medium">
                                             {transcript}
-                                            <span className="text-indigo-500 italic ml-1 animate-pulse">{liveBuffer}</span>
+                                            <span className="text-primary italic ml-1 animate-pulse">{liveBuffer}</span>
                                         </p>
                                     </div>
                                 ) : (
-                                    <div className="h-full flex flex-col items-center justify-center opacity-40">
-                                        <Mic className="w-20 h-20 text-slate-300 mb-6" />
-                                        <p className="text-2xl font-medium text-slate-600">Classroom Listener</p>
-                                        <p className="text-sm text-slate-500 mt-2">I'll transcribe the lecture and detect questions automatically.</p>
+                                    <div className="h-full flex flex-col items-center justify-center text-center px-6">
+                                        <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center mb-5">
+                                            <Mic className="w-8 h-8" />
+                                        </div>
+                                        <p className="text-xl font-bold text-foreground">Start your lecture.</p>
+                                        <p className="text-sm text-muted-foreground mt-2 max-w-sm leading-relaxed">
+                                            VibeSchool will capture key ideas, detect questions, and build revision notes automatically.
+                                        </p>
                                     </div>
                                 )}
                                 <div ref={transcriptEndRef} className="h-4" />
                             </div>
 
                             {/* 2. BOTTOM CONTROL BAR (FIXED INSIDE CARD) */}
-                            <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/95 dark:bg-black/90 border-t backdrop-blur-md flex items-center justify-center gap-4 z-20">
-                                <Button 
-                                    variant={isListening ? "destructive" : "default"} 
-                                    className="gap-2 shadow-lg min-w-[140px]" 
+                            <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/95 dark:bg-black/90 border-t backdrop-blur-md flex flex-wrap items-center justify-center gap-3 z-20">
+                                <Button
+                                    variant={isListening ? "destructive" : "default"}
+                                    className="gap-2 shadow-lg min-w-[140px] rounded-xl"
                                     onClick={toggleListening}
                                 >
                                     {isListening ? <><MicOff className="w-4 h-4" /> Pause Mic</> : <><Play className="w-4 h-4" /> Resume Mic</>}
                                 </Button>
-                                <Button 
-                                    variant="secondary" 
-                                    className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg min-w-[140px]" 
-                                    onClick={handleFinishLecture} 
+                                <Button
+                                    variant="outline"
+                                    className="gap-2 rounded-xl"
+                                    onClick={markImportant}
+                                    disabled={!transcript}
+                                    title="Bookmark this moment (not saved to the server)"
+                                >
+                                    <Bookmark className="w-4 h-4" /> Mark Important
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg min-w-[140px] rounded-xl"
+                                    onClick={handleFinishLecture}
                                     disabled={isGeneratingNotes || !transcript}
                                 >
-                                    {isGeneratingNotes ? <Loader2 className="animate-spin w-4 h-4" /> : <Save className="w-4 h-4" />} 
+                                    {isGeneratingNotes ? <Loader2 className="animate-spin w-4 h-4" /> : <Save className="w-4 h-4" />}
                                     {isGeneratingNotes ? "Generating..." : "Finish Lecture"}
                                 </Button>
                             </div>
@@ -367,26 +385,39 @@ const Classroom = () => {
             </div>
 
             {/* RIGHT: TOOLS (4 Cols) */}
-            <div className="lg:col-span-4 flex flex-col gap-6 h-full min-h-0">
-                
+            <div className="lg:col-span-4 flex flex-col gap-4 h-full min-h-0">
+
+                {markedMoments.length > 0 && (
+                    <Card className="border border-border shadow-sm shrink-0 p-3">
+                        <h3 className="font-bold text-xs uppercase tracking-wider text-muted-foreground flex items-center gap-2 mb-2">
+                            <Bookmark className="w-3.5 h-3.5 text-primary" /> Marked Moments
+                        </h3>
+                        <div className="space-y-1.5 max-h-24 overflow-y-auto">
+                            {markedMoments.map((m, i) => (
+                                <p key={i} className="text-xs text-muted-foreground bg-secondary/50 rounded-lg px-2.5 py-1.5 line-clamp-1">"{m}"</p>
+                            ))}
+                        </div>
+                    </Card>
+                )}
+
                 {/* QA HISTORY (Full Height) */}
-                <Card className="flex-1 border-2 border-indigo-100 dark:border-indigo-900 bg-indigo-50/50 dark:bg-indigo-950/20 flex flex-col overflow-hidden relative">
-                    <div className="p-3 border-b border-indigo-200/50 flex items-center justify-between text-indigo-700 dark:text-indigo-300 bg-indigo-100/50 shrink-0">
+                <Card className="flex-1 border border-primary/15 bg-primary/5 flex flex-col overflow-hidden relative rounded-2xl">
+                    <div className="p-3 border-b border-primary/15 flex items-center justify-between text-primary bg-primary/10 shrink-0">
                         <div className="flex items-center gap-2">
                             <BrainCircuit className="w-4 h-4" />
-                            <h3 className="font-bold text-xs uppercase tracking-wider">Live Answers</h3>
+                            <h3 className="font-bold text-xs uppercase tracking-wider">Live Answers & Auto Notes</h3>
                         </div>
                         <span className="text-[10px] bg-white/50 px-2 py-0.5 rounded-full font-mono">{qaHistory.length}</span>
                     </div>
-                    
+
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 relative">
                         {/* Anchor for top scrolling */}
                         <div ref={qaTopRef} />
 
                         {isThinking && (
-                            <div className="p-3 rounded-xl bg-white dark:bg-black border border-indigo-200 shadow-md animate-pulse flex items-center gap-3">
-                                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
-                                <span className="text-xs font-semibold text-indigo-600">Analyzing Question...</span>
+                            <div className="p-3 rounded-xl bg-white dark:bg-black border border-primary/20 shadow-md animate-pulse flex items-center gap-3">
+                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                <span className="text-xs font-semibold text-primary">Analyzing Question...</span>
                             </div>
                         )}
 
@@ -394,33 +425,33 @@ const Classroom = () => {
                             qaHistory.map((item, idx) => {
                                 const isExpanded = expandedId === item.id;
                                 return (
-                                    <div 
-                                        key={item.id} 
+                                    <div
+                                        key={item.id}
                                         onClick={() => setExpandedId(isExpanded ? null : item.id)}
                                         className={`
                                             cursor-pointer p-3 rounded-xl border shadow-sm transition-all duration-300 animate-in slide-in-from-top-2
-                                            ${idx === 0 
-                                                ? 'bg-white dark:bg-black border-indigo-300 ring-2 ring-indigo-100 z-10 shadow-md' 
+                                            ${idx === 0
+                                                ? 'bg-white dark:bg-black border-primary/30 ring-2 ring-primary/10 z-10 shadow-md'
                                                 : 'bg-white/60 dark:bg-black/40 border-transparent opacity-80 hover:opacity-100 hover:bg-white'
                                             }
                                         `}
                                     >
                                         <div className="flex justify-between items-start mb-1">
-                                            <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wide truncate max-w-[75%]">"{item.query}"</p>
+                                            <p className="text-[10px] font-bold text-primary uppercase tracking-wide truncate max-w-[75%]">"{item.query}"</p>
                                             <span className="text-[10px] text-muted-foreground/50 flex items-center gap-1 whitespace-nowrap"><Clock className="w-3 h-3"/> {item.time}</span>
                                         </div>
-                                        
+
                                         <div className="flex justify-between items-center gap-2">
                                             <p className={`font-bold leading-tight line-clamp-2 ${idx === 0 ? 'text-sm text-foreground' : 'text-xs text-foreground/70'}`}>
                                                 {item.answer}
                                             </p>
-                                            {isExpanded ? <ChevronUp className="w-4 h-4 text-indigo-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground/30 shrink-0" />}
+                                            {isExpanded ? <ChevronUp className="w-4 h-4 text-primary/70 shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground/30 shrink-0" />}
                                         </div>
 
                                         {isExpanded && (
-                                            <div className="mt-3 pt-3 border-t border-indigo-100 dark:border-indigo-900/50 animate-in fade-in slide-in-from-top-1">
-                                                <p className="text-xs text-muted-foreground leading-relaxed bg-indigo-50/50 dark:bg-indigo-900/20 p-2 rounded-lg">
-                                                    <span className="font-bold text-indigo-600 block mb-1 text-[10px] uppercase tracking-wider">Detailed Explanation:</span>
+                                            <div className="mt-3 pt-3 border-t border-primary/10 animate-in fade-in slide-in-from-top-1">
+                                                <p className="text-xs text-muted-foreground leading-relaxed bg-primary/5 p-2 rounded-lg">
+                                                    <span className="font-bold text-primary block mb-1 text-[10px] uppercase tracking-wider">Detailed Explanation:</span>
                                                     {item.explanation}
                                                 </p>
                                             </div>
@@ -431,7 +462,7 @@ const Classroom = () => {
                         ) : (
                             !isThinking && (
                                 <div className="h-full flex flex-col items-center justify-center opacity-40 text-center p-4">
-                                    <Zap className="w-10 h-10 mb-2 text-indigo-400" />
+                                    <Zap className="w-10 h-10 mb-2 text-primary/60" />
                                     <p className="text-xs font-medium">AI is listening...</p>
                                     <p className="text-[10px] text-muted-foreground mt-1">Try saying: "What is 12 times 12?" or "Tell me about..."</p>
                                 </div>

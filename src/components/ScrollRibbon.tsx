@@ -133,7 +133,7 @@ export const ScrollRibbon = () => {
       const pt = pathRef.current!.getPointAtLength(wp.at * len);
       return { x: pt.x, y: pt.y };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [len]);
 
   /* ── Scroll handler: move tip + activate waypoints ─── */

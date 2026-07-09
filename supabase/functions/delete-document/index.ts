@@ -6,7 +6,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { handleCorsPreflight, jsonResponse, safeErrorMessage } from "../_shared/cors.ts";
-import { deleteR2Object, requiredEnv } from "../_shared/r2.ts";
+import { buildTempR2Key, buildUserFileKey, deleteR2Object, requiredEnv } from "../_shared/r2.ts";
 import { deletePineconeVectorsForDocument } from "../_shared/pinecone.ts";
 
 function getBearerToken(req: Request) {
@@ -48,8 +48,10 @@ serve(async (req) => {
 
     await deletePineconeVectorsForDocument(documentId, Number(documentRow.chunk_count || 0));
 
-    const r2Key = `temp/${documentRow.user_id}/${documentRow.document_id}/${documentRow.file_name}`;
-    await deleteR2Object(r2Key);
+    // The file may be sitting in either prefix depending on how far it got
+    // through the pipeline (still processing vs. fully in the library).
+    await deleteR2Object(buildTempR2Key(documentRow.user_id, documentRow.document_id, documentRow.file_name));
+    await deleteR2Object(buildUserFileKey(documentRow.user_id, documentRow.document_id, documentRow.file_name));
 
     const { error: deleteError } = await supabase
       .from("documents")

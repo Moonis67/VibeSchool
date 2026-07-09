@@ -7,7 +7,7 @@ Security hardening pass for the existing Vite + Supabase + Supabase Edge Functio
 ## Vulnerabilities Found
 
 - Edge Functions used wildcard CORS and did not consistently require verified user JWTs.
-- `transform-vibe` and `edge-tts` could be called without a real authenticated user token.
+- `transform-vibe` and `deepgram-tts` could be called without a real authenticated user token.
 - Edge Functions returned raw upstream/internal error messages to clients.
 - RAG upload validation allowed extra file extensions and did not perform strict MIME/header checks.
 - File names were stored without server-side sanitization.
@@ -46,7 +46,7 @@ Security hardening pass for the existing Vite + Supabase + Supabase Edge Functio
   - optional `chat_sessions`
   - optional `chat_messages`
   - avatar storage ownership policies
-- Removed browser-side direct Edge TTS token fallback.
+- Removed browser-side direct TTS token fallback.
 - Updated Classroom and Transform to call protected Edge Functions with the current user access token.
 - Changed protected-route session check from local session presence to verified `getUser()`.
 - Added logout cleanup for sensitive browser storage.
@@ -69,7 +69,7 @@ Security hardening pass for the existing Vite + Supabase + Supabase Edge Functio
 - `supabase/functions/_shared/cors.ts`
 - `supabase/functions/process-document/index.ts`
 - `supabase/functions/transform-vibe/index.ts`
-- `supabase/functions/edge-tts/index.ts`
+- `supabase/functions/deepgram-tts/index.ts`
 - `supabase/migrations/rag_r2_pinecone_storage.sql`
 - `supabase/migrations/security_hardening.sql`
 
@@ -81,10 +81,10 @@ Set this Supabase Edge Function secret to enable production CORS:
 ALLOWED_ORIGINS=https://your-production-domain.com
 ```
 
-If using Edge TTS, set:
+If using Deepgram TTS, set:
 
 ```txt
-EDGE_TTS_TRUSTED_CLIENT_TOKEN=...
+DEEPGRAM_API_KEY=...
 ```
 
 Keep these only in Supabase Edge Function secrets, never frontend env:
@@ -95,7 +95,7 @@ R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 PINECONE_API_KEY
 GROQ_API_KEY
-EDGE_TTS_TRUSTED_CLIENT_TOKEN
+DEEPGRAM_API_KEY
 ```
 
 Frontend env should contain only public Vite variables such as:
@@ -104,7 +104,7 @@ Frontend env should contain only public Vite variables such as:
 VITE_SUPABASE_URL
 VITE_SUPABASE_PUBLISHABLE_KEY
 VITE_SUPABASE_PROJECT_ID
-VITE_EDGE_TTS_ENDPOINT
+VITE_DEEPGRAM_TTS_ENDPOINT
 ```
 
 ## Remaining Recommendations
