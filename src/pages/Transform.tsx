@@ -35,13 +35,15 @@ import {
   Image as ImageIcon, GraduationCap, Layers, Cpu, Lock, Unlock
 } from "lucide-react";
 
-// htmlLabels: false forces node/edge labels to render as plain SVG <text>
-// elements instead of <foreignObject><div>...</div></foreignObject>. That
-// matters because sanitizeSvg (below) strips every <foreignObject> to keep
-// the AI-generated diagram markup from smuggling in raw HTML/script — with
-// htmlLabels on, that stripping was silently deleting all the label text.
+// htmlLabels: false is only a default hint — Mermaid still renders any
+// double-quoted node/edge label (its "markdown string" syntax, which the
+// diagram prompts use for every label) via <foreignObject><div>...</div>
+// regardless of this setting. sanitizeSvg (below) must not blanket-delete
+// <foreignObject> content or every label vanishes; it strips scripts/
+// event handlers/javascript: URLs instead, which is enough to keep the
+// AI-generated markup from smuggling in executable content.
 mermaid.initialize({
-  startOnLoad: true,
+  startOnLoad: false,
   theme: 'default',
   securityLevel: 'strict',
   flowchart: { htmlLabels: false },
@@ -89,13 +91,32 @@ const MermaidChart = ({ chart }: { chart: string }) => {
 
       fixed = fixed.replace(/\s\|>\s/g, " --> ");
 
+      // The LLM sometimes prefixes the diagram with an intro sentence
+      // ("Here's the flowchart:") despite being told not to — drop any
+      // lines before the actual graph declaration.
+      const lines = fixed.split("\n");
+      const headerIndex = lines.findIndex((line) => /^\s*(graph|flowchart)\s+(TD|TB|BT|RL|LR)\b/i.test(line));
+      if (headerIndex > 0) {
+        fixed = lines.slice(headerIndex).join("\n");
+      } else if (headerIndex === -1) {
+        fixed = `graph TD\n${fixed}`;
+      }
+
+      // "end" (case-insensitive, standalone) closes a subgraph in Mermaid's
+      // grammar. Our prompts never open subgraphs, so any node/label that
+      // happens to use the word "end" as a bare token — a common one for
+      // education content ("End", "The End") — collides with that keyword
+      // and throws a parse error. Rename it everywhere it isn't part of a
+      // longer word.
+      fixed = fixed.replace(/\bend\b/gi, "EndNode");
+
       return fixed;
     };
 
     const sanitizeSvg = (svg: string) =>
       svg
         .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
-        .replace(/<foreignObject[\s\S]*?>[\s\S]*?<\/foreignObject>/gi, "")
+        .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, "")
         .replace(/\son\w+="[^"]*"/gi, "")
         .replace(/\son\w+='[^']*'/gi, "")
         .replace(/javascript:/gi, "");
@@ -109,8 +130,9 @@ const MermaidChart = ({ chart }: { chart: string }) => {
           ref.current.innerHTML = sanitizeSvg(svg);
         }
       } catch (e) {
+        console.error("Mermaid render failed:", e);
         if (ref.current) {
-          ref.current.textContent = "Diagram syntax error.";
+          ref.current.innerHTML = "";
         }
       }
     }, 200);
@@ -128,7 +150,7 @@ const MermaidChart = ({ chart }: { chart: string }) => {
 
 const SmartRender = ({ text }: { text: string }) => {
   if (!text) return null;
-  const parts = text.split(/(\$\$[\s\S]*?\Suppress\$\$|\\\[[\s\S]*?\\\]|\$.*?\$|\\\(.*?\\\)|```mermaid[\s\S]*?```)/g);
+  const parts = text.split(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\$.*?\$|\\\(.*?\\\)|```mermaid[\s\S]*?```)/g);
 
   return (
     <div className="space-y-6 text-left w-full">
@@ -138,7 +160,7 @@ const SmartRender = ({ text }: { text: string }) => {
             return <MermaidChart key={index} chart={part.replace(/```mermaid|```/g, '').trim()} />;
         }
         if ((part.startsWith('$$') && part.endsWith('$$')) || (part.startsWith('\\['))) {
-            return <MathRenderer key={index} formula={part.replace(/\Suppress\$\$|\\\[|\\\]/g, '').trim()} displayMode={true} />;
+            return <MathRenderer key={index} formula={part.replace(/\$\$|\\\[|\\\]/g, '').trim()} displayMode={true} />;
         }
         if ((part.startsWith('$') && part.endsWith('$')) || (part.startsWith('\\('))) {
             return <MathRenderer key={index} formula={part.replace(/\$|\\\(|\\\)/g, '').trim()} displayMode={false} />;
