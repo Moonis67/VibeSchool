@@ -801,20 +801,28 @@ const QuizBlock = ({ rawData, onRetry, onDiveDeeper, onComplete }: {
 
     useEffect(() => {
         if (!rawData) return;
+        // Anchored on the literal field markers (A), B), Correct:, ...) rather
+        // than naive split('|') — CS topics routinely produce option text
+        // containing a real "|" character (bitwise OR, shell pipes, "||"),
+        // and a positional split shifts every field after the first stray
+        // pipe, silently dropping or scrambling questions.
+        const fieldPattern = /Q:\s*([\s\S]*?)\s*\|\s*A\)\s*([\s\S]*?)\s*\|\s*B\)\s*([\s\S]*?)\s*\|\s*C\)\s*([\s\S]*?)\s*\|\s*D\)\s*([\s\S]*?)\s*\|\s*Correct:\s*([A-Da-d])\b\s*(?:\|\s*Area:\s*([\s\S]*?))?\s*$/i;
         const parsed = rawData.split('###').map(block => {
-            if (block.trim().length < 10) return null;
-            const parts = block.split('|').map(s => s.trim());
-            if (parts.length < 6) return null;
+            const trimmed = block.trim();
+            if (trimmed.length < 10) return null;
+            const match = trimmed.match(fieldPattern);
+            if (!match) return null;
+            const [, q, a, b, c, d, correct, area] = match;
             return {
-                q: parts[0].replace(/^Q:\s*/i, ''),
+                q: q.trim(),
                 options: [
-                    { id: 'A', text: parts[1].replace(/^A\)\s*/i, '') },
-                    { id: 'B', text: parts[2].replace(/^B\)\s*/i, '') },
-                    { id: 'C', text: parts[3].replace(/^C\)\s*/i, '') },
-                    { id: 'D', text: parts[4].replace(/^D\)\s*/i, '') },
+                    { id: 'A', text: a.trim() },
+                    { id: 'B', text: b.trim() },
+                    { id: 'C', text: c.trim() },
+                    { id: 'D', text: d.trim() },
                 ],
-                correct: parts[5].replace(/^Correct:\s*/i, '').charAt(0).toUpperCase(),
-                area: parts[6]?.replace(/^Area:\s*/i, '').trim() || inferQuestionArea(parts[0])
+                correct: correct.toUpperCase(),
+                area: area?.trim() || inferQuestionArea(q)
             };
         }).filter((question): question is QuizQuestion => Boolean(question));
         setQuestions(parsed);
@@ -956,10 +964,16 @@ const RapidFireBlock = ({ rawData, onRetry }: { rawData: string, onRetry: () => 
 
     useEffect(() => {
         if (!rawData) return;
+        // Anchored on "| A:" rather than a positional split('|') — a literal
+        // "|" inside the question text (common in CS topics: bitwise OR,
+        // shell pipes) otherwise shifts the answer into the wrong slot.
+        const fieldPattern = /Q:\s*([\s\S]*?)\s*\|\s*A:\s*([\s\S]*?)\s*$/i;
         const parsed = rawData.split('###').map(block => {
-            const parts = block.split('|');
-            if (parts.length < 2) return null;
-            return { q: parts[0].replace(/^Q:\s*/i, '').trim(), a: parts[1].replace(/^A:\s*/i, '').trim() };
+            const trimmed = block.trim();
+            if (trimmed.length < 4) return null;
+            const match = trimmed.match(fieldPattern);
+            if (!match) return null;
+            return { q: match[1].trim(), a: match[2].trim() };
         }).filter((question): question is RapidFireQuestion => Boolean(question));
         setQuestions(parsed);
     }, [rawData]);
@@ -2872,9 +2886,14 @@ const Transform = () => {
   // diagram or roadmap left over from whatever tool ran before it. Called
   // from every place that switches the active tool (studio picker, chat "@"
   // commands), so no entry point can skip it and leave stale state showing.
-  const resetForToolSwitch = (tab: string) => {
+  const resetForToolSwitch = (tab: string, targetVizFormat?: string) => {
     setToolSessionStart(contentStream.length);
-    if (tab !== "visualize") setDiagramCode("");
+    // "visualize" covers Flow Diagram/DLD (which render from diagramCode)
+    // AND Cheat Sheet (which renders from a contentStream "visual-aids"
+    // block instead) — so staying on the same tab isn't enough to know
+    // diagramCode is still relevant; only clear-when-different-tab was
+    // leaving a stale Mermaid diagram behind whenever Cheat Sheet opened.
+    if (tab !== "visualize" || targetVizFormat === "cheatsheet") setDiagramCode("");
     if (tab !== "plan") setRoadmapData([]);
   };
 
@@ -2884,7 +2903,7 @@ const Transform = () => {
     if (tool.quizFormat) setQuizFormat(tool.quizFormat);
     if (tool.vizFormat) setVizFormat(tool.vizFormat);
     setIsToolWorkspaceOpen(true);
-    resetForToolSwitch(tool.tab);
+    resetForToolSwitch(tool.tab, tool.vizFormat);
     openStudioFocusPicker(tool.label, true);
   };
 
@@ -3330,7 +3349,7 @@ const Transform = () => {
     if (command.learnFormat) setLearnFormat(command.learnFormat);
     if (command.quizFormat) setQuizFormat(command.quizFormat);
     if (command.vizFormat) setVizFormat(command.vizFormat);
-    resetForToolSwitch(command.tab);
+    resetForToolSwitch(command.tab, command.vizFormat);
     setIsCommandMenuOpen(false);
     setExplainInput((value) => value.replace(/@\w*$/, "").trimStart());
   };
@@ -3935,7 +3954,7 @@ const Transform = () => {
               )}
 
               {/* Diagram / Plan output */}
-              {activeTab === 'visualize' && diagramCode && (
+              {activeTab === 'visualize' && vizFormat !== 'cheatsheet' && diagramCode && (
                 <div className="flex flex-col items-center"><MermaidChart chart={diagramCode} /><Button variant="ghost" className="mt-3 text-xs" onClick={() => navigator.clipboard.writeText(diagramCode)}><Share2 className="w-3 h-3 mr-1.5" /> Copy Code</Button></div>
               )}
               {activeTab === 'plan' && roadmapData.length > 0 && (
